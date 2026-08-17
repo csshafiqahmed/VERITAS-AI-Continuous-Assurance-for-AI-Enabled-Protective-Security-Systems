@@ -56,6 +56,7 @@ packages = ["src/veritas_ai"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config -ra"
+pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
   "zeek: requires evidence produced by the pinned Docker-backed Zeek integration",

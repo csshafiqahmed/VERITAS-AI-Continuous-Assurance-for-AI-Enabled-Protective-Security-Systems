@@ -17,6 +17,7 @@ nav:
   - Model card: model-card.md
   - Schemas: schemas.md
   - Reproducibility: reproducibility.md
+  - Release process: release-process.md
   - TRL 3 evidence: trl3-evidence.md
   - Limitations: limitations.md
 markdown_extensions:

@@ -1,8 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from veritas_ai.ledger import verify_ledger
-from veritas_ai.workflow import run_demo
+from veritas_ai.workflow import _git_revision, run_demo
 
 
 def test_complete_demo_produces_verifiable_evidence(tmp_path: Path) -> None:
@@ -30,3 +32,11 @@ def test_complete_demo_produces_verifiable_evidence(tmp_path: Path) -> None:
     ]
     report = json.loads((tmp_path / "run/verification_report.json").read_text())
     assert report["events_checked"] == 6
+
+
+def test_git_revision_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError
+
+    monkeypatch.setattr("veritas_ai.workflow.subprocess.run", unavailable)
+    assert _git_revision() == "unavailable"

@@ -1,10 +1,16 @@
 .git
 .github
 .venv
+.coverage
+.mypy_cache
+.pytest_cache
+.ruff_cache
 AGENTS.md
 CLAUDE.md
 Academic Phrasebank.pdf
 progress.md
+dist
+release-assets
 runs
 site
 tests
