@@ -1,0 +1,27 @@
+# Private local continuity files
+AGENTS.md
+CLAUDE.md
+Academic Phrasebank.pdf
+progress.md
+
+# Local environments
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated evidence and keys
+runs/
+*.pem
+dist/
+build/
+site/
+*.egg-info/
+.DS_Store
