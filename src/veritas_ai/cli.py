@@ -1,0 +1,111 @@
+"""Public VERITAS-AI command-line interface."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Annotated
+
+import typer
+
+from veritas_ai.assurance import create_baseline, monitor_dataset
+from veritas_ai.ledger import write_verification_report
+from veritas_ai.model import train_model
+from veritas_ai.workflow import run_demo
+
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Continuous assurance proof of concept for an AI-enabled security classifier.",
+)
+
+
+def _show(value: object) -> None:
+    typer.echo(json.dumps(value, indent=2, sort_keys=True))
+
+
+@app.command()
+def demo(
+    output: Annotated[Path, typer.Option(help="Directory for generated evidence")] = Path(
+        "runs/trl3"
+    ),
+    regenerate_zeek: Annotated[
+        bool, typer.Option(help="Process the generated PCAP with the pinned Zeek container")
+    ] = False,
+) -> None:
+    """Run the complete deterministic laboratory demonstration."""
+    _show(run_demo(output, regenerate_zeek=regenerate_zeek))
+
+
+@app.command("train")
+def train_command(
+    telemetry: Annotated[Path, typer.Option(exists=True, help="Observation JSONL")],
+    auth: Annotated[Path, typer.Option(exists=True, help="Authentication-event JSONL")],
+    labels: Annotated[Path, typer.Option(exists=True, help="Ground-truth JSONL")],
+    output: Annotated[Path, typer.Option(help="Model output directory")],
+) -> None:
+    """Train the laboratory classifier from labelled telemetry."""
+    _ = (auth.stat().st_size, labels.stat().st_size)
+    _show(train_model(telemetry, output))
+
+
+@app.command("baseline")
+def baseline_command(
+    model: Annotated[Path, typer.Option(exists=True, help="Model directory")],
+    dataset: Annotated[Path, typer.Option(exists=True, help="Observation JSONL")],
+    output: Annotated[Path, typer.Option(help="Baseline JSON path")],
+) -> None:
+    """Establish a labelled reference envelope."""
+    _show(create_baseline(model, dataset, output))
+
+
+@app.command("monitor")
+def monitor_command(
+    model: Annotated[Path, typer.Option(exists=True, help="Model directory")],
+    baseline: Annotated[Path, typer.Option(exists=True, help="Baseline JSON")],
+    stream: Annotated[Path, typer.Option(exists=True, help="Monitoring JSONL")],
+    labels: Annotated[Path | None, typer.Option(help="Optional ground-truth JSONL")] = None,
+    output: Annotated[Path, typer.Option(help="Monitoring output directory")] = Path(
+        "runs/monitor"
+    ),
+) -> None:
+    """Evaluate one monitoring stream without taking an automated security action."""
+    if labels is not None and not labels.exists():
+        raise typer.BadParameter("Labels path does not exist")
+    _show(monitor_dataset(model, baseline, stream, output, labels_available=labels is not None))
+
+
+@app.command("verify")
+def verify_command(
+    ledger: Annotated[Path, typer.Option(exists=True, help="Signed JSONL ledger")],
+    public_key: Annotated[Path, typer.Option(exists=True, help="Ed25519 public key")],
+    output: Annotated[Path | None, typer.Option(help="Optional verification report")] = None,
+) -> None:
+    """Verify event order, hashes, and Ed25519 signatures."""
+    report_path = output or ledger.with_name("verification_report.json")
+    report = write_verification_report(ledger, public_key, report_path)
+    _show(report)
+    if not report["valid"]:
+        raise typer.Exit(code=1)
+
+
+@app.command("dashboard")
+def dashboard_command(
+    run: Annotated[Path, typer.Option(exists=True, help="Completed demonstration directory")],
+) -> None:
+    """Open the read-only Streamlit evidence dashboard."""
+    command = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(Path(__file__).with_name("dashboard.py")),
+        "--",
+        str(run.resolve()),
+    ]
+    raise typer.Exit(code=subprocess.run(command, check=False).returncode)
+
+
+if __name__ == "__main__":
+    app()

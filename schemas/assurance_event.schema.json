@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/veritas-ai/1.0/assurance_event.schema.json",
+  "title": "VERITAS-AI signed assurance event",
+  "type": "object",
+  "required": ["schema_version", "index", "previous_hash", "event", "event_hash", "signature"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "index": {"type": "integer", "minimum": 0},
+    "previous_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "event": {"type": "object"},
+    "event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "signature": {"type": "string"}
+  },
+  "additionalProperties": false
+}
