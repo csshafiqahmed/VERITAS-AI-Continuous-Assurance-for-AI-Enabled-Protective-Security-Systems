@@ -33,9 +33,9 @@ def test_evidence_bundle_is_normalised(tmp_path: Path) -> None:
 def test_evidence_bundle_rejects_private_key(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     _complete_run(run_dir)
-    (run_dir / "baseline.json").write_bytes(
-        b"-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n"
-    )
+    begin_marker = b"-----BEGIN " + b"PRIVATE KEY-----"
+    end_marker = b"-----END " + b"PRIVATE KEY-----"
+    (run_dir / "baseline.json").write_bytes(begin_marker + b"\nsecret\n" + end_marker + b"\n")
     with pytest.raises(ValueError, match="Private key material"):
         build_bundle(run_dir, tmp_path / "evidence.tar.gz", "0.1.0", Path.cwd())
 
