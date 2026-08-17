@@ -7,7 +7,7 @@ import re
 import shutil
 import socket
 import subprocess
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,9 @@ SCENARIOS = [
     "model_replacement",
     "recovery_after_investigation",
 ]
+
+KNOWN_SERVICE_PORTS = (22, 53, 80, 443, 445, 3389)
+WINDOW_SECONDS = 10.0
 
 ZEEK_REQUIRED_FIELDS = frozenset(
     {
@@ -110,13 +113,14 @@ def _packet(
     source_port: int,
     destination_port: int,
     payload_size: int,
+    sequence: int = 1,
     reverse: bool = False,
 ) -> bytes:
-    payload = b"V" * min(max(payload_size, 1), 1200)
+    payload = b"V" * max(payload_size, 1)
     tcp = dpkt.tcp.TCP(
         sport=destination_port if reverse else source_port,
         dport=source_port if reverse else destination_port,
-        seq=1,
+        seq=sequence,
         flags=dpkt.tcp.TH_ACK | dpkt.tcp.TH_PUSH,
         data=payload,
     )
@@ -134,11 +138,136 @@ def _packet(
     return bytes(ethernet)
 
 
+def _flow_key(record: dict[str, Any]) -> str:
+    try:
+        source = str(record["id.orig_h"])
+        source_port = int(record["id.orig_p"])
+        destination = str(record["id.resp_h"])
+        destination_port = int(record["id.resp_p"])
+        protocol = str(record["proto"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Connection record has an invalid flow identifier") from error
+    return f"{source}:{source_port}-{destination}:{destination_port}-{protocol}"
+
+
+def _payload_chunks(total: int, count: int) -> list[int]:
+    quotient, remainder = divmod(max(total, count), count)
+    return [quotient + (1 if index < remainder else 0) for index in range(count)]
+
+
+def build_observations(
+    telemetry_path: Path,
+    auth_path: Path,
+    labels_path: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    """Join connection, authentication, and label evidence into stable observation windows."""
+    connections = read_jsonl(telemetry_path)
+    auth_events = read_jsonl(auth_path)
+    labels = read_jsonl(labels_path)
+    if not connections or not auth_events or not labels:
+        raise ValueError("Feature building requires telemetry, authentication events, and labels")
+
+    label_by_window: dict[str, dict[str, Any]] = {}
+    flow_to_window: dict[str, str] = {}
+    for label_record in labels:
+        window_id = str(label_record.get("window_id", ""))
+        if not window_id or window_id in label_by_window:
+            raise ValueError("Labels require unique non-empty window identifiers")
+        flow_keys = label_record.get("flow_keys")
+        if not isinstance(flow_keys, list) or not flow_keys:
+            raise ValueError(f"Label window {window_id} requires at least one flow key")
+        for value in flow_keys:
+            flow_key = str(value)
+            if flow_key in flow_to_window:
+                raise ValueError(f"Flow key {flow_key} is assigned to more than one window")
+            flow_to_window[flow_key] = window_id
+        label_by_window[window_id] = label_record
+
+    auth_by_window: dict[str, dict[str, Any]] = {}
+    for auth_record in auth_events:
+        window_id = str(auth_record.get("window_id", ""))
+        if not window_id or window_id in auth_by_window:
+            raise ValueError("Authentication events require unique non-empty window identifiers")
+        auth_by_window[window_id] = auth_record
+    if set(auth_by_window) != set(label_by_window):
+        raise ValueError("Authentication and label windows do not match")
+
+    grouped: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    seen_flows: set[str] = set()
+    for connection in connections:
+        flow_key = _flow_key(connection)
+        if flow_key in seen_flows:
+            raise ValueError(f"Connection telemetry repeats flow key {flow_key}")
+        seen_flows.add(flow_key)
+        mapped_window = flow_to_window.get(flow_key)
+        if mapped_window is None:
+            raise ValueError(f"Connection telemetry contains unknown flow key {flow_key}")
+        grouped[mapped_window].append(connection)
+    missing_flows = sorted(set(flow_to_window).difference(seen_flows))
+    if missing_flows:
+        raise ValueError(f"Connection telemetry is missing {len(missing_flows)} expected flows")
+
+    observations: list[dict[str, Any]] = []
+    for window_id in sorted(label_by_window):
+        label_record = label_by_window[window_id]
+        auth_record = auth_by_window[window_id]
+        window_connections = grouped[window_id]
+        responder_ports = [int(record["id.resp_p"]) for record in window_connections]
+        observations.append(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "window_id": window_id,
+                "timestamp": float(label_record["timestamp"]),
+                "split": str(label_record["split"]),
+                "scenario": str(label_record["scenario"]),
+                "label": str(label_record["label"]),
+                "duration": float(
+                    np.mean([float(record["duration"]) for record in window_connections])
+                ),
+                "orig_bytes": float(
+                    np.mean([float(record["orig_bytes"]) for record in window_connections])
+                ),
+                "resp_bytes": float(
+                    np.mean([float(record["resp_bytes"]) for record in window_connections])
+                ),
+                "orig_pkts": float(
+                    np.mean([float(record["orig_pkts"]) for record in window_connections])
+                ),
+                "resp_pkts": float(
+                    np.mean([float(record["resp_pkts"]) for record in window_connections])
+                ),
+                "unique_destinations": float(
+                    len({str(record["id.resp_h"]) for record in window_connections})
+                ),
+                "failed_auth": float(auth_record["failed_auth"]),
+                "new_service_ratio": float(
+                    np.mean(
+                        [port not in KNOWN_SERVICE_PORTS for port in responder_ports],
+                    )
+                ),
+                "connection_rate": float(len(window_connections)),
+                "telemetry_missing": float(auth_record.get("telemetry_missing", 0.0)),
+            }
+        )
+
+    write_jsonl(output_path, observations)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "window_strategy": "explicit_flow_to_window_mapping",
+        "window_seconds": WINDOW_SECONDS,
+        "observation_count": len(observations),
+        "connection_count": len(connections),
+        "authentication_event_count": len(auth_events),
+        "label_count": len(labels),
+        "output_sha256": sha256_file(output_path),
+    }
+
+
 def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) -> dict[str, Any]:
     """Generate safe labelled observations, auth events, labels, PCAP, and Zeek-compatible JSON."""
     output.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
-    observations: list[dict[str, Any]] = []
     auth_events: list[dict[str, Any]] = []
     labels: list[dict[str, Any]] = []
     zeek_records: list[dict[str, Any]] = []
@@ -146,7 +275,7 @@ def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) 
     pcap_path = output / "traffic.pcap"
 
     with pcap_path.open("wb") as handle:
-        writer = dpkt.pcap.Writer(handle)
+        writer = dpkt.pcap.Writer(handle, snaplen=65535)
         for index in range(count):
             split, scenario = _split_and_scenario(index)
             label = str(rng.choice(CLASSES, p=[0.60, 0.10, 0.10, 0.10, 0.10]))
@@ -160,29 +289,98 @@ def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) 
                 features["resp_pkts"] += progress * 4
 
             source = f"10.{(index // 60000) % 250}.{(index // 250) % 250}.{index % 250 + 1}"
-            destination = f"192.0.2.{index % 250 + 1}"
-            source_port = 10000 + index
-            destination_port = [22, 80, 443, 445, 3389][index % 5]
-            flow_key = f"{source}:{source_port}-{destination}:{destination_port}-tcp"
-            timestamp = epoch + index * 2
+            timestamp = epoch + index * WINDOW_SECONDS
             window_id = f"w{index:06d}"
-            record: dict[str, Any] = {
-                "schema_version": SCHEMA_VERSION,
-                "window_id": window_id,
-                "timestamp": timestamp,
-                "flow_key": flow_key,
-                "split": split,
-                "scenario": scenario,
-                "label": label,
-                **features,
-            }
-            observations.append(record)
+            flow_count = max(
+                1,
+                round(features["connection_rate"]),
+                round(features["unique_destinations"]),
+            )
+            unique_destination_count = min(
+                flow_count,
+                max(1, round(features["unique_destinations"])),
+            )
+            new_service_count = min(
+                flow_count,
+                max(0, round(features["new_service_ratio"] * flow_count)),
+            )
+            response_packet_count = max(1, round(features["resp_pkts"]))
+            duration = min(max(0.01, features["duration"]), WINDOW_SECONDS * 0.8)
+            orig_bytes = max(1, round(features["orig_bytes"]))
+            resp_bytes = max(1, round(features["resp_bytes"]))
+            flow_keys: list[str] = []
+            packet_events: list[tuple[float, bytes]] = []
+
+            for flow_index in range(flow_count):
+                destination = f"192.0.2.{flow_index % unique_destination_count + 1}"
+                source_port = 10000 + flow_index
+                destination_port = (
+                    8000 + flow_index
+                    if flow_index < new_service_count
+                    else KNOWN_SERVICE_PORTS[(index + flow_index) % len(KNOWN_SERVICE_PORTS)]
+                )
+                flow_key = f"{source}:{source_port}-{destination}:{destination_port}-tcp"
+                flow_keys.append(flow_key)
+                flow_timestamp = timestamp + flow_index * 0.001
+                zeek_records.append(
+                    {
+                        "ts": flow_timestamp,
+                        "uid": f"{window_id}-{flow_index:03d}",
+                        "id.orig_h": source,
+                        "id.orig_p": source_port,
+                        "id.resp_h": destination,
+                        "id.resp_p": destination_port,
+                        "proto": "tcp",
+                        "duration": duration,
+                        "orig_bytes": orig_bytes,
+                        "resp_bytes": resp_bytes,
+                        "orig_pkts": 1,
+                        "resp_pkts": response_packet_count,
+                        "synthetic_zeek_compatible": True,
+                    }
+                )
+                packet_events.append(
+                    (
+                        flow_timestamp,
+                        _packet(
+                            source,
+                            destination,
+                            source_port,
+                            destination_port,
+                            orig_bytes,
+                        ),
+                    )
+                )
+                sequence = 1
+                for packet_index, payload_size in enumerate(
+                    _payload_chunks(resp_bytes, response_packet_count), start=1
+                ):
+                    packet_events.append(
+                        (
+                            flow_timestamp + duration * packet_index / response_packet_count,
+                            _packet(
+                                source,
+                                destination,
+                                source_port,
+                                destination_port,
+                                payload_size,
+                                sequence=sequence,
+                                reverse=True,
+                            ),
+                        )
+                    )
+                    sequence += payload_size
+
+            for packet_timestamp, packet in sorted(packet_events, key=lambda event: event[0]):
+                writer.writepkt(packet, ts=packet_timestamp)
+
             auth_events.append(
                 {
                     "schema_version": SCHEMA_VERSION,
                     "window_id": window_id,
                     "timestamp": timestamp,
                     "failed_auth": int(features["failed_auth"]),
+                    "telemetry_missing": float(features["telemetry_missing"]),
                     "synthetic": True,
                 }
             )
@@ -190,58 +388,32 @@ def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) 
                 {
                     "schema_version": SCHEMA_VERSION,
                     "window_id": window_id,
-                    "flow_key": flow_key,
+                    "timestamp": timestamp,
+                    "flow_keys": flow_keys,
                     "label": label,
                     "split": split,
                     "scenario": scenario,
                 }
             )
-            zeek_records.append(
-                {
-                    "ts": timestamp,
-                    "uid": window_id,
-                    "id.orig_h": source,
-                    "id.orig_p": source_port,
-                    "id.resp_h": destination,
-                    "id.resp_p": destination_port,
-                    "proto": "tcp",
-                    "duration": features["duration"],
-                    "orig_bytes": int(features["orig_bytes"]),
-                    "resp_bytes": int(features["resp_bytes"]),
-                    "orig_pkts": int(features["orig_pkts"]),
-                    "resp_pkts": int(features["resp_pkts"]),
-                    "synthetic_zeek_compatible": True,
-                }
-            )
-            writer.writepkt(
-                _packet(
-                    source, destination, source_port, destination_port, int(features["orig_bytes"])
-                ),
-                ts=timestamp,
-            )
-            writer.writepkt(
-                _packet(
-                    source,
-                    destination,
-                    source_port,
-                    destination_port,
-                    int(features["resp_bytes"]),
-                    True,
-                ),
-                ts=timestamp + min(features["duration"], 1.0),
-            )
 
-    write_jsonl(output / "observations.jsonl", observations)
     write_jsonl(output / "auth.jsonl", auth_events)
     write_jsonl(output / "labels.jsonl", labels)
     write_jsonl(output / "conn.log", zeek_records)
+    feature_builder = build_observations(
+        output / "conn.log",
+        output / "auth.jsonl",
+        output / "labels.jsonl",
+        output / "observations.jsonl",
+    )
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "seed": seed,
         "observation_count": count,
+        "connection_count": len(zeek_records),
         "classes": CLASSES,
         "traffic_mode": "safe_synthetic",
         "zeek_mode": "synthetic_zeek_compatible",
+        "feature_builder": feature_builder,
         "files": {
             name: sha256_file(output / name)
             for name in [
@@ -365,8 +537,15 @@ def process_with_zeek(data_dir: Path, image: str) -> dict[str, Any]:
 
     manifest_path = data_dir / "dataset_manifest.json"
     manifest = read_json(manifest_path)
-    validation = validate_zeek_conn_log(conn_log, int(manifest["observation_count"]))
+    validation = validate_zeek_conn_log(conn_log, int(manifest["connection_count"]))
+    feature_builder = build_observations(
+        conn_log,
+        data_dir / "auth.jsonl",
+        data_dir / "labels.jsonl",
+        data_dir / "observations.jsonl",
+    )
     manifest["zeek_mode"] = "official_container"
+    manifest["feature_builder"] = feature_builder
     manifest["zeek"] = {
         "image": image,
         "version": version_output,
@@ -375,5 +554,6 @@ def process_with_zeek(data_dir: Path, image: str) -> dict[str, Any]:
         **validation,
     }
     manifest["files"]["zeek-output/conn.log"] = sha256_file(conn_log)
+    manifest["files"]["observations.jsonl"] = sha256_file(data_dir / "observations.jsonl")
     write_json(manifest_path, manifest)
     return manifest

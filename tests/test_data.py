@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from veritas_ai.constants import ZEEK_IMAGE
-from veritas_ai.data import generate_dataset, process_with_zeek, validate_zeek_conn_log
+from veritas_ai.data import (
+    build_observations,
+    generate_dataset,
+    process_with_zeek,
+    validate_zeek_conn_log,
+)
 from veritas_ai.io import read_json, read_jsonl, write_jsonl
 
 
@@ -32,6 +37,8 @@ def test_generation_is_deterministic(tmp_path: Path) -> None:
     second = generate_dataset(tmp_path / "second", count=60, seed=42)
     assert first["files"] == second["files"]
     assert first["observation_count"] == 60
+    assert first["connection_count"] > first["observation_count"]
+    assert first["feature_builder"]["output_sha256"] == first["files"]["observations.jsonl"]
 
 
 def test_zeek_log_validation_rejects_missing_fields(tmp_path: Path) -> None:
@@ -97,7 +104,8 @@ def test_process_with_zeek_records_pinned_provenance(
     manifest = process_with_zeek(data_dir, ZEEK_IMAGE)
     persisted = read_json(data_dir / "dataset_manifest.json")
     assert manifest == persisted
-    assert manifest["zeek"]["record_count"] == 2
+    assert manifest["zeek"]["record_count"] == manifest["connection_count"]
+    assert manifest["feature_builder"]["observation_count"] == 2
     assert manifest["zeek"]["image"] == ZEEK_IMAGE
     assert manifest["zeek"]["network_access"] == "disabled"
     assert all("none" in command for command in commands)
@@ -139,3 +147,44 @@ def test_process_with_zeek_requires_connection_log(
     )
     with pytest.raises(RuntimeError, match="did not produce"):
         process_with_zeek(data_dir, ZEEK_IMAGE)
+
+
+def test_feature_builder_rejects_window_and_flow_mismatches(tmp_path: Path) -> None:
+    telemetry = tmp_path / "conn.log"
+    auth = tmp_path / "auth.jsonl"
+    labels = tmp_path / "labels.jsonl"
+    output = tmp_path / "observations.jsonl"
+    record = _valid_zeek_record()
+    flow_key = "192.0.2.1:10000-192.0.2.2:443-tcp"
+    write_jsonl(telemetry, [record])
+    write_jsonl(auth, [{"window_id": "w1", "failed_auth": 0}])
+    write_jsonl(
+        labels,
+        [
+            {
+                "window_id": "w1",
+                "timestamp": 1.0,
+                "flow_keys": [flow_key],
+                "label": "benign",
+                "split": "train",
+                "scenario": "reference",
+            }
+        ],
+    )
+
+    summary = build_observations(telemetry, auth, labels, output)
+    assert summary["observation_count"] == 1
+    observation = read_jsonl(output)[0]
+    assert observation["window_id"] == "w1"
+    assert observation["failed_auth"] == 0.0
+    assert observation["connection_rate"] == 1.0
+
+    write_jsonl(auth, [{"window_id": "w2", "failed_auth": 0}])
+    with pytest.raises(ValueError, match="windows do not match"):
+        build_observations(telemetry, auth, labels, output)
+
+    write_jsonl(auth, [{"window_id": "w1", "failed_auth": 0}])
+    record["id.orig_p"] = 10001
+    write_jsonl(telemetry, [record])
+    with pytest.raises(ValueError, match="unknown flow key"):
+        build_observations(telemetry, auth, labels, output)

@@ -15,6 +15,8 @@ The demonstrator establishes a reference envelope for an AI-enabled network intr
 - A native XGBoost JSON model
 - A versioned monitoring policy
 
+Connection telemetry, authentication events, and labels remain separate inputs. The offline feature builder requires unique window identifiers and a complete non-overlapping mapping from each generated flow to one window. It rejects unknown, repeated, or missing flows before producing model observations.
+
 ## Outputs
 
 - A model manifest containing hashes, features, classes, and dependency versions

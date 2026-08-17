@@ -11,6 +11,7 @@ from typing import Annotated
 import typer
 
 from veritas_ai.assurance import create_baseline, monitor_dataset
+from veritas_ai.data import build_observations
 from veritas_ai.ledger import write_verification_report
 from veritas_ai.model import train_model
 from veritas_ai.workflow import run_demo
@@ -46,8 +47,14 @@ def train_command(
     output: Annotated[Path, typer.Option(help="Model output directory")],
 ) -> None:
     """Train the laboratory classifier from labelled telemetry."""
-    _ = (auth.stat().st_size, labels.stat().st_size)
-    _show(train_model(telemetry, output))
+    dataset_path = output / "training_observations.jsonl"
+    feature_builder = build_observations(telemetry, auth, labels, dataset_path)
+    _show(
+        {
+            "feature_builder": feature_builder,
+            "model_manifest": train_model(dataset_path, output),
+        }
+    )
 
 
 @app.command("baseline")

@@ -4,7 +4,9 @@ The method is deliberately staged. It first checks that the assurance mechanism 
 
 ## Data generation
 
-A fixed seed produces 5,000 labelled observations. The first 2,500 support training, 500 support calibration, 500 establish the reference envelope, and six groups of 250 exercise the monitoring scenarios. The accompanying PCAP contains safe synthetic TCP exchanges and no exploit payloads. A separate Docker-backed gate processes the PCAP with the digest-pinned official Zeek 8.0.9 LTS image and validates the resulting JSON `conn.log` before admitting its hash and provenance to the evidence manifest.
+A fixed seed defines 5,000 labelled windows. The first 2,500 support training, 500 support calibration, 500 establish the reference envelope, and six groups of 250 exercise the monitoring scenarios. Each window maps to one or more safe synthetic TCP flows and one authentication event. A feature builder checks the complete flow-to-window mapping and then aggregates Zeek connection fields and authentication evidence. Ground-truth labels are joined only for the controlled offline evaluation.
+
+The accompanying PCAP contains no exploit payloads. A separate Docker-backed gate processes all 41,248 default-seed flows with the digest-pinned official Zeek 8.0.9 LTS image. It validates the resulting JSON `conn.log` and rebuilds `observations.jsonl` from that output before model training, baselining, and monitoring.
 
 ## Security model
 

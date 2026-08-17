@@ -17,8 +17,14 @@ def test_complete_demo_produces_verifiable_evidence(tmp_path: Path) -> None:
         "model_replacement",
         "recovery_after_investigation",
     }
-    assert summary["scenario_actions"]["model_replacement"] == "withdraw"
-    assert summary["scenario_actions"]["gradual_feature_drift"] == "recalibrate"
+    assert summary["scenario_actions"] == {
+        "stable_operation": "continue",
+        "benign_workload_change": "continue",
+        "partial_telemetry_loss": "investigate",
+        "gradual_feature_drift": "recalibrate",
+        "model_replacement": "withdraw",
+        "recovery_after_investigation": "continue",
+    }
     assert verify_ledger(tmp_path / "run/assurance_events.jsonl", tmp_path / "run/public_key.pem")[
         "valid"
     ]

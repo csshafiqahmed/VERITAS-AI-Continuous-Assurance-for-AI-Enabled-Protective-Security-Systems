@@ -23,6 +23,18 @@ def test_pinned_zeek_evidence_from_cli() -> None:
     assert manifest["zeek"]["image"] == ZEEK_IMAGE
     assert ZEEK_VERSION in manifest["zeek"]["version"]
     assert manifest["zeek"]["network_access"] == "disabled"
-    assert manifest["zeek"]["record_count"] == manifest["observation_count"]
-    assert validate_zeek_conn_log(conn_log, manifest["observation_count"])["record_count"] == 5000
+    assert manifest["zeek"]["record_count"] == manifest["connection_count"]
+    assert manifest["feature_builder"]["observation_count"] == 5000
+    assert (
+        validate_zeek_conn_log(conn_log, manifest["connection_count"])["record_count"]
+        == manifest["connection_count"]
+    )
+    assert summary["scenario_actions"] == {
+        "stable_operation": "continue",
+        "benign_workload_change": "continue",
+        "partial_telemetry_loss": "investigate",
+        "gradual_feature_drift": "recalibrate",
+        "model_replacement": "withdraw",
+        "recovery_after_investigation": "continue",
+    }
     assert summary["ledger_valid"] is True

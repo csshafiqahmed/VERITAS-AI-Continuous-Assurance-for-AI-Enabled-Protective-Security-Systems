@@ -6,6 +6,8 @@
 
 VERITAS-AI is a laboratory proof of concept for baselining and monitoring an AI-enabled protective security capability. It uses a synthetic network intrusion classifier as the system under assurance. The assurance layer observes data quality, distribution change, labelled performance when labels exist, model integrity, and policy integrity.
 
+The model input is built rather than copied from the generator. Connection telemetry, authentication events, and separate labels are joined through explicit stable window and flow identifiers. The Docker-backed route rebuilds the same 5,000 observation windows from Zeek's output before training and monitoring.
+
 The project is designed to produce evidence consistent with Technology Readiness Level 3. It is not an operational security product, a certified system, or evidence of TRL 6.
 
 ## Quick start
@@ -32,7 +34,7 @@ To regenerate the network evidence through Zeek, use a machine with Docker. The 
 uv run veritas-ai demo --regenerate-zeek --output runs/trl3
 ```
 
-The validated JSON connection log is saved at `runs/trl3/data/zeek-output/conn.log`. Its hash, record count, image reference, reported Zeek version, and required-field contract are recorded in the dataset manifest.
+The validated JSON connection log is saved at `runs/trl3/data/zeek-output/conn.log`. Its hash, record count, image reference, reported Zeek version, and required-field contract are recorded in the dataset manifest. `observations.jsonl` is then rebuilt from this log, `auth.jsonl`, and `labels.jsonl`.
 
 ## Assurance outcomes
 

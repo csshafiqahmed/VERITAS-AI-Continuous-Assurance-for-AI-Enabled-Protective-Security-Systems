@@ -77,6 +77,8 @@ def train_model(dataset_path: Path, output: Path, seed: int = DEFAULT_SEED) -> d
         "seed": seed,
         "features": FEATURES,
         "classes": CLASSES,
+        "dataset_sha256": sha256_file(dataset_path),
+        "dataset_observations": len(records),
         "training_observations": len(training),
         "calibration_observations": len(calibration),
         "training_seconds": training_seconds,
