@@ -127,8 +127,7 @@ def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) 
                 features["telemetry_missing"] = 1.0 if index % 10 == 0 else 0.0
             elif scenario == "gradual_feature_drift":
                 progress = ((index - 4250) % 250) / 249
-                features["orig_bytes"] *= 1 + progress * 0.5
-                features["unique_destinations"] += progress * 7
+                features["resp_pkts"] += progress * 4
 
             source = f"10.{(index // 60000) % 250}.{(index // 250) % 250}.{index % 250 + 1}"
             destination = f"192.0.2.{index % 250 + 1}"
