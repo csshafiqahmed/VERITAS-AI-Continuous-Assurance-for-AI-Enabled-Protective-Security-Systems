@@ -22,3 +22,5 @@ Synthetic PCAP and authentication events
 ```
 
 Every complete run records the code version, schema version, model hash, policy hash, and data-generation seed. An integrity mismatch is treated separately from statistical deterioration.
+
+The dashboard is a read-only evidence view. Before displaying a value, it verifies the Ed25519 ledger, checks the event count, and confirms that the summary decisions exactly match the signed events. A modified ledger or inconsistent summary is rejected rather than displayed.
