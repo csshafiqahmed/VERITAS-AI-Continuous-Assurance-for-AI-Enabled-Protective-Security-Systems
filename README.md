@@ -36,6 +36,30 @@ uv run veritas-ai demo --regenerate-zeek --output runs/trl3
 
 The validated JSON connection log is saved at `runs/trl3/data/zeek-output/conn.log`. Its hash, record count, image reference, reported Zeek version, and required-field contract are recorded in the dataset manifest. `observations.jsonl` is then rebuilt from this log, `auth.jsonl`, and `labels.jsonl`.
 
+## Separate workflows
+
+The same stages can be run independently.
+
+```bash
+veritas-ai train \
+  --telemetry runs/trl3/data/conn.log \
+  --auth runs/trl3/data/auth.jsonl \
+  --labels runs/trl3/data/labels.jsonl \
+  --output runs/model
+veritas-ai baseline \
+  --model runs/model \
+  --dataset runs/model/training_observations.jsonl \
+  --output runs/baseline.json
+veritas-ai monitor \
+  --model runs/model \
+  --baseline runs/baseline.json \
+  --stream PATH_TO_MONITORING_JSONL \
+  --labels PATH_TO_OPTIONAL_GROUND_TRUTH_JSONL \
+  --output runs/monitor
+```
+
+The monitoring command joins ground truth by stable `window_id`, never by row position. If `--labels` is omitted, current accuracy, calibration, and false-negative measures remain unavailable in the result.
+
 ## Assurance outcomes
 
 The demonstrator emits four advisory outcomes.

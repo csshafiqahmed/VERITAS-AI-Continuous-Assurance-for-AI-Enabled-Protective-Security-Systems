@@ -80,7 +80,7 @@ def monitor_command(
     """Evaluate one monitoring stream without taking an automated security action."""
     if labels is not None and not labels.exists():
         raise typer.BadParameter("Labels path does not exist")
-    _show(monitor_dataset(model, baseline, stream, output, labels_available=labels is not None))
+    _show(monitor_dataset(model, baseline, stream, output, labels_path=labels))
 
 
 @app.command("verify")

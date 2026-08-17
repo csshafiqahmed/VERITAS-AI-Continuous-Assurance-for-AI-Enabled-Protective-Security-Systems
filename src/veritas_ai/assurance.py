@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from veritas_ai.constants import CLASSES, FEATURES, SCHEMA_VERSION, THRESHOLDS
+from veritas_ai.data import attach_ground_truth
 from veritas_ai.io import canonical_json, read_json, read_jsonl, sha256_bytes, write_json
 from veritas_ai.metrics import (
     distribution_profile,
@@ -177,13 +178,16 @@ def monitor_dataset(
     baseline_path: Path,
     stream_path: Path,
     output_dir: Path,
-    labels_available: bool,
+    labels_path: Path | None = None,
 ) -> dict[str, Any]:
+    records = read_jsonl(stream_path)
+    if labels_path is not None:
+        records = attach_ground_truth(records, labels_path)
     result = monitor_records(
         model_dir,
         baseline_path,
-        read_jsonl(stream_path),
-        labels_available=labels_available,
+        records,
+        labels_available=labels_path is not None,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     write_json(output_dir / "monitoring_result.json", result)

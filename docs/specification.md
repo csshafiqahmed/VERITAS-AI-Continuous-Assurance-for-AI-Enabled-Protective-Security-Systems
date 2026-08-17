@@ -17,6 +17,8 @@ The demonstrator establishes a reference envelope for an AI-enabled network intr
 
 Connection telemetry, authentication events, and labels remain separate inputs. The offline feature builder requires unique window identifiers and a complete non-overlapping mapping from each generated flow to one window. It rejects unknown, repeated, or missing flows before producing model observations.
 
+The independent `train` command performs this three-source join before fitting the model. The `monitor` command accepts ground truth separately and joins it by `window_id`. Omitting ground truth suppresses accuracy, calibration, and false-negative calculations even if an incidental label field appears in the monitoring stream.
+
 ## Outputs
 
 - A model manifest containing hashes, features, classes, and dependency versions

@@ -7,6 +7,7 @@ import pytest
 
 from veritas_ai.constants import ZEEK_IMAGE
 from veritas_ai.data import (
+    attach_ground_truth,
     build_observations,
     generate_dataset,
     process_with_zeek,
@@ -188,3 +189,24 @@ def test_feature_builder_rejects_window_and_flow_mismatches(tmp_path: Path) -> N
     write_jsonl(telemetry, [record])
     with pytest.raises(ValueError, match="unknown flow key"):
         build_observations(telemetry, auth, labels, output)
+
+
+def test_ground_truth_is_joined_by_window_identifier(tmp_path: Path) -> None:
+    labels = tmp_path / "labels.jsonl"
+    write_jsonl(
+        labels,
+        [
+            {"window_id": "w2", "label": "reconnaissance"},
+            {"window_id": "w1", "label": "benign"},
+        ],
+    )
+    joined = attach_ground_truth(
+        [{"window_id": "w1", "value": 1}, {"window_id": "w2", "value": 2}], labels
+    )
+    assert [record["label"] for record in joined] == ["benign", "reconnaissance"]
+
+    with pytest.raises(ValueError, match="unavailable"):
+        attach_ground_truth([{"window_id": "w3"}], labels)
+
+    with pytest.raises(ValueError, match="unique"):
+        attach_ground_truth([{"window_id": "w1"}, {"window_id": "w1"}], labels)

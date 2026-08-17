@@ -264,6 +264,32 @@ def build_observations(
     }
 
 
+def attach_ground_truth(records: list[dict[str, Any]], labels_path: Path) -> list[dict[str, Any]]:
+    """Attach explicit ground truth to observation windows without using row order."""
+    labels_by_window: dict[str, str] = {}
+    for label_record in read_jsonl(labels_path):
+        window_id = str(label_record.get("window_id", ""))
+        label = str(label_record.get("label", ""))
+        if not window_id or window_id in labels_by_window:
+            raise ValueError("Ground truth requires unique non-empty window identifiers")
+        if label not in CLASSES:
+            raise ValueError(f"Ground truth for {window_id} has an unknown class")
+        labels_by_window[window_id] = label
+
+    joined: list[dict[str, Any]] = []
+    seen_windows: set[str] = set()
+    for record in records:
+        window_id = str(record.get("window_id", ""))
+        if not window_id or window_id in seen_windows:
+            raise ValueError("Monitoring records require unique non-empty window identifiers")
+        seen_windows.add(window_id)
+        mapped_label = labels_by_window.get(window_id)
+        if mapped_label is None:
+            raise ValueError(f"Ground truth is unavailable for monitoring window {window_id}")
+        joined.append({**record, "label": mapped_label})
+    return joined
+
+
 def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) -> dict[str, Any]:
     """Generate safe labelled observations, auth events, labels, PCAP, and Zeek-compatible JSON."""
     output.mkdir(parents=True, exist_ok=True)
