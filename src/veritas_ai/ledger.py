@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,28 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from veritas_ai.constants import SCHEMA_VERSION
 from veritas_ai.io import canonical_json, sha256_bytes, write_json, write_jsonl
 
+LEDGER_SEAL_TYPE = "seal"
+LEDGER_EVENT_TYPE = "event"
+
+
+def _signed_record(
+    private_key: Ed25519PrivateKey,
+    index: int,
+    previous_hash: str,
+    record_type: str,
+    event: dict[str, Any],
+) -> dict[str, Any]:
+    unsigned = {
+        "schema_version": SCHEMA_VERSION,
+        "index": index,
+        "previous_hash": previous_hash,
+        "record_type": record_type,
+        "event": event,
+    }
+    event_hash = sha256_bytes(canonical_json(unsigned))
+    signature = base64.b64encode(private_key.sign(event_hash.encode("ascii"))).decode("ascii")
+    return {**unsigned, "event_hash": event_hash, "signature": signature}
+
 
 def sign_events(
     events: list[dict[str, Any]], ledger_path: Path, public_key_path: Path
@@ -23,17 +46,26 @@ def sign_events(
     previous_hash = "0" * 64
     records: list[dict[str, Any]] = []
     for index, event in enumerate(events):
-        unsigned = {
-            "schema_version": SCHEMA_VERSION,
-            "index": index,
-            "previous_hash": previous_hash,
-            "event": event,
-        }
-        event_hash = sha256_bytes(canonical_json(unsigned))
-        signature = base64.b64encode(private_key.sign(event_hash.encode("ascii"))).decode("ascii")
-        record = {**unsigned, "event_hash": event_hash, "signature": signature}
+        record = _signed_record(
+            private_key,
+            index,
+            previous_hash,
+            LEDGER_EVENT_TYPE,
+            event,
+        )
         records.append(record)
-        previous_hash = event_hash
+        previous_hash = str(record["event_hash"])
+    seal = _signed_record(
+        private_key,
+        len(events),
+        previous_hash,
+        LEDGER_SEAL_TYPE,
+        {
+            "event_count": len(events),
+            "terminal_event_hash": previous_hash,
+        },
+    )
+    records.append(seal)
     write_jsonl(ledger_path, records)
     public_key_path.parent.mkdir(parents=True, exist_ok=True)
     public_key_path.write_bytes(
@@ -53,27 +85,59 @@ def verify_ledger(ledger_path: Path, public_key_path: Path) -> dict[str, Any]:
     checked = 0
     error: str | None = None
     try:
-        for line_number, line in enumerate(
-            ledger_path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            if not line.strip():
-                continue
+        lines = [
+            line for line in ledger_path.read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
+        seal_seen = False
+        for line_number, line in enumerate(lines, start=1):
             record = json.loads(line)
+            if record["schema_version"] != SCHEMA_VERSION:
+                raise ValueError(f"Unsupported schema version at line {line_number}")
             unsigned = {
                 "schema_version": record["schema_version"],
                 "index": record["index"],
                 "previous_hash": record["previous_hash"],
+                "record_type": record["record_type"],
                 "event": record["event"],
             }
-            if record["index"] != checked or record["previous_hash"] != previous_hash:
+            if record["index"] != line_number - 1 or record["previous_hash"] != previous_hash:
                 raise ValueError(f"Broken chain at line {line_number}")
             calculated = sha256_bytes(canonical_json(unsigned))
             if calculated != record["event_hash"]:
                 raise ValueError(f"Hash mismatch at line {line_number}")
-            key.verify(base64.b64decode(record["signature"]), calculated.encode("ascii"))
+            key.verify(
+                base64.b64decode(record["signature"], validate=True),
+                calculated.encode("ascii"),
+            )
+            record_type = record["record_type"]
+            event = record["event"]
+            if not isinstance(event, dict):
+                raise ValueError(f"Event payload is not an object at line {line_number}")
+            if record_type == LEDGER_EVENT_TYPE:
+                if seal_seen:
+                    raise ValueError(f"Event follows terminal seal at line {line_number}")
+                checked += 1
+            elif record_type == LEDGER_SEAL_TYPE:
+                if seal_seen or line_number != len(lines):
+                    raise ValueError(f"Terminal seal is not final at line {line_number}")
+                if event.get("event_count") != checked:
+                    raise ValueError(f"Terminal event count mismatch at line {line_number}")
+                if event.get("terminal_event_hash") != previous_hash:
+                    raise ValueError(f"Terminal event hash mismatch at line {line_number}")
+                seal_seen = True
+            else:
+                raise ValueError(f"Unknown record type at line {line_number}")
             previous_hash = calculated
-            checked += 1
-    except (InvalidSignature, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        if not seal_seen:
+            raise ValueError("Ledger is missing a signed terminal seal")
+    except (
+        InvalidSignature,
+        KeyError,
+        TypeError,
+        ValueError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ) as exc:
         error = str(exc) or exc.__class__.__name__
     return {
         "schema_version": SCHEMA_VERSION,

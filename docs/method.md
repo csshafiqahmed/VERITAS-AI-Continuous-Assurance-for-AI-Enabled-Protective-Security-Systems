@@ -14,7 +14,7 @@ XGBoost is the primary multiclass classifier. A multinomial logistic regression 
 
 ## Assurance measurements
 
-The baseline records per-class error rates, macro F1, expected calibration error, confidence, feature distributions, latency, and missingness. Monitoring uses Population Stability Index, a one-sided CUSUM, integrity hashes, and labelled deterioration where labels exist.
+The baseline records per-class error rates, macro F1, expected calibration error, confidence, feature distributions, latency, and missingness. Monitoring uses Population Stability Index, a one-sided confidence CUSUM, integrity hashes, and labelled deterioration where labels exist. In an unlabelled stream, a CUSUM value at or above the configured five-sigma decision interval produces an `investigate` recommendation. It does not imply a current accuracy or false-negative estimate.
 
 ## Decisions
 

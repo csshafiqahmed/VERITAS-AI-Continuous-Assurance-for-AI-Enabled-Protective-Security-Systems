@@ -23,7 +23,7 @@ The independent `train` command performs this three-source join before fitting t
 
 - A model manifest containing hashes, features, classes, and dependency versions
 - A baseline containing labelled metrics and feature distributions
-- An append-only signed assurance ledger
+- An append-only signed assurance ledger with a mandatory terminal seal
 - A run summary containing environment and evidence provenance
 - A public Ed25519 verification key
 - A machine-readable verification report
@@ -31,3 +31,5 @@ The independent `train` command performs this three-source join before fitting t
 ## Evidence boundary
 
 Labelled metrics are unavailable when monitoring data have no ground truth. The system must not infer current accuracy, calibration, or false-negative rates from drift alone. All decisions are advisory and require human interpretation.
+
+The terminal ledger seal signs the final event hash and expected event count. Verification fails if a signed event suffix or the seal itself is removed. The recorded Git revision is resolved only from the source project checkout. Installed wheels outside that checkout report the revision as unavailable rather than adopting the revision of an unrelated working directory.

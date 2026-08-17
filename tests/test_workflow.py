@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -40,3 +41,19 @@ def test_git_revision_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("veritas_ai.workflow.subprocess.run", unavailable)
     assert _git_revision() == "unavailable"
+
+
+def test_git_revision_is_bound_to_project_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    revision = "a" * 40
+    calls: list[list[str]] = []
+
+    def controlled(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        output = f"{project_root}\n" if "--show-toplevel" in command else f"{revision}\n"
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr("veritas_ai.workflow.subprocess.run", controlled)
+    assert _git_revision() == revision
+    assert len(calls) == 2
+    assert all(command[:3] == ["git", "-C", str(project_root)] for command in calls)

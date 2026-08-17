@@ -6,7 +6,7 @@ The versioned JSON Schemas in the repository describe the public evidence format
 |---|---|
 | Model manifest | `schemas/model_manifest.schema.json` |
 | Assurance baseline | `schemas/baseline.schema.json` |
-| Signed event | `schemas/assurance_event.schema.json` |
+| Signed event or terminal seal | `schemas/assurance_event.schema.json` |
 | Run summary | `schemas/run_summary.schema.json` |
 | Verification report | `schemas/verification_report.schema.json` |
 

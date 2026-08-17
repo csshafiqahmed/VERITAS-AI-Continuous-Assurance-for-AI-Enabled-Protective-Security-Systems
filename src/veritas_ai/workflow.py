@@ -18,9 +18,28 @@ from veritas_ai.model import train_model
 
 
 def _git_revision() -> str:
+    project_root = Path(__file__).resolve().parents[2]
+    source_file = project_root / "src" / "veritas_ai" / "workflow.py"
+    if (
+        not (project_root / "pyproject.toml").is_file()
+        or not source_file.is_file()
+        or source_file.resolve() != Path(__file__).resolve()
+    ):
+        return "unavailable"
     try:
+        root_result = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "--show-toplevel"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if (
+            root_result.returncode != 0
+            or Path(root_result.stdout.strip()).resolve() != project_root
+        ):
+            return "unavailable"
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "-C", str(project_root), "rev-parse", "--verify", "HEAD^{commit}"],
             check=False,
             capture_output=True,
             text=True,

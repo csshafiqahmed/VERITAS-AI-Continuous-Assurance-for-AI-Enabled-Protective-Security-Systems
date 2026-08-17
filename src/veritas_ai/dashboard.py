@@ -24,6 +24,8 @@ def dashboard_snapshot(run_dir: Path) -> dict[str, Any]:
 
     events: list[dict[str, Any]] = []
     for index, record in enumerate(read_jsonl(run_dir / "assurance_events.jsonl"), start=1):
+        if record.get("record_type") == "seal":
+            continue
         event = record.get("event")
         if not isinstance(event, dict):
             raise ValueError(f"Ledger record {index} does not contain an event object")

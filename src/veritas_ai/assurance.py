@@ -65,6 +65,48 @@ def _maximum_fnr_increase(current: dict[str, Any], baseline: dict[str, Any]) -> 
     return max(increases, default=0.0)
 
 
+def _advisory_decision(
+    *,
+    integrity_ok: bool,
+    missingness: float,
+    fnr_increase: float | None,
+    ece_increase: float | None,
+    labels_available: bool,
+    context_approved: bool,
+    max_psi: float,
+    confidence_cusum: float,
+) -> tuple[str, list[str]]:
+    if not integrity_ok:
+        return "withdraw", ["model_or_policy_integrity_mismatch"]
+    if missingness >= THRESHOLDS["missing_critical"]:
+        return "withdraw", ["critical_telemetry_missingness"]
+    if fnr_increase is not None and fnr_increase >= THRESHOLDS["fnr_increase_critical"]:
+        return "withdraw", ["critical_false_negative_deterioration"]
+    if ece_increase is not None and ece_increase >= THRESHOLDS["ece_increase_critical"]:
+        return "withdraw", ["critical_calibration_deterioration"]
+    if (
+        labels_available
+        and not context_approved
+        and (
+            max_psi >= THRESHOLDS["psi_critical"]
+            or (fnr_increase is not None and fnr_increase >= THRESHOLDS["fnr_increase_warning"])
+            or (ece_increase is not None and ece_increase >= THRESHOLDS["ece_increase_warning"])
+        )
+    ):
+        return "recalibrate", ["persistent_labelled_deterioration"]
+    if missingness >= THRESHOLDS["missing_warning"]:
+        return "investigate", ["partial_telemetry_loss"]
+    if (
+        not labels_available
+        and not context_approved
+        and confidence_cusum >= THRESHOLDS["cusum_decision_sigma"]
+    ):
+        return "investigate", ["confidence_cusum_threshold_exceeded"]
+    if max_psi >= THRESHOLDS["psi_warning"] and not context_approved:
+        return "investigate", ["feature_distribution_warning"]
+    return "continue", []
+
+
 def monitor_records(
     model_dir: Path,
     baseline_path: Path,
@@ -114,37 +156,16 @@ def monitor_records(
         "policy_matches": (observed_policy_hash or policy_hash()) == baseline["policy_sha256"],
     }
     max_psi = max(psi.values())
-    reasons: list[str] = []
-    action = "continue"
-    if not all(integrity.values()):
-        action = "withdraw"
-        reasons.append("model_or_policy_integrity_mismatch")
-    elif missingness >= THRESHOLDS["missing_critical"]:
-        action = "withdraw"
-        reasons.append("critical_telemetry_missingness")
-    elif fnr_increase is not None and fnr_increase >= THRESHOLDS["fnr_increase_critical"]:
-        action = "withdraw"
-        reasons.append("critical_false_negative_deterioration")
-    elif ece_increase is not None and ece_increase >= THRESHOLDS["ece_increase_critical"]:
-        action = "withdraw"
-        reasons.append("critical_calibration_deterioration")
-    elif (
-        labels_available
-        and not context_approved
-        and (
-            max_psi >= THRESHOLDS["psi_critical"]
-            or (fnr_increase is not None and fnr_increase >= THRESHOLDS["fnr_increase_warning"])
-            or (ece_increase is not None and ece_increase >= THRESHOLDS["ece_increase_warning"])
-        )
-    ):
-        action = "recalibrate"
-        reasons.append("persistent_labelled_deterioration")
-    elif missingness >= THRESHOLDS["missing_warning"]:
-        action = "investigate"
-        reasons.append("partial_telemetry_loss")
-    elif max_psi >= THRESHOLDS["psi_warning"] and not context_approved:
-        action = "investigate"
-        reasons.append("feature_distribution_warning")
+    action, reasons = _advisory_decision(
+        integrity_ok=all(integrity.values()),
+        missingness=missingness,
+        fnr_increase=fnr_increase,
+        ece_increase=ece_increase,
+        labels_available=labels_available,
+        context_approved=context_approved,
+        max_psi=max_psi,
+        confidence_cusum=confidence_cusum,
+    )
 
     if operator_acknowledged and stable_window_count >= 2 and action == "continue":
         reasons.append("acknowledged_recovery_with_two_stable_windows")

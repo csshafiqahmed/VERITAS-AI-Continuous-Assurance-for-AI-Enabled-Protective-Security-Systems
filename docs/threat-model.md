@@ -21,7 +21,8 @@ The threat model focuses on assurance evidence rather than attempting to cover e
 ## Controls
 
 - SHA-256 hashes bind models, policies, schemas, and event order
-- Ed25519 signatures authenticate each run ledger
+- Ed25519 signatures authenticate each ledger record and its mandatory terminal seal
+- The signed terminal event count and hash make removal of a valid ledger suffix detectable
 - Strict schema validation rejects malformed and non-finite data
 - Native XGBoost JSON avoids executable deserialisation
 - Private signing material is never written to release artifacts
