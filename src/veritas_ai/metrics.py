@@ -57,19 +57,18 @@ def distribution_profile(values: np.ndarray, bins: int = 10) -> dict[str, list[f
     finite = values[np.isfinite(values)]
     if len(finite) == 0:
         raise ValueError("Distribution profile requires finite values")
-    edges = np.unique(np.quantile(finite, np.linspace(0.0, 1.0, bins + 1)))
-    if len(edges) < 3:
-        centre = float(finite[0])
-        edges = np.array([centre - 1.0, centre, centre + 1.0])
-    edges[0] = -np.inf
-    edges[-1] = np.inf
-    counts, _ = np.histogram(finite, bins=edges)
+    thresholds = np.unique(np.quantile(finite, np.linspace(0.0, 1.0, bins + 1)[1:-1]))
+    if len(thresholds) == 0:
+        thresholds = np.array([float(finite[0])])
+    histogram_edges = np.concatenate(([-np.inf], thresholds, [np.inf]))
+    counts, _ = np.histogram(finite, bins=histogram_edges)
     proportions = (counts / max(counts.sum(), 1)).astype(float)
-    return {"edges": edges.tolist(), "proportions": proportions.tolist()}
+    return {"edges": thresholds.tolist(), "proportions": proportions.tolist()}
 
 
 def population_stability_index(values: np.ndarray, profile: dict[str, list[float]]) -> float:
-    edges = np.asarray(profile["edges"], dtype=float)
+    thresholds = np.asarray(profile["edges"], dtype=float)
+    edges = np.concatenate(([-np.inf], thresholds, [np.inf]))
     expected = np.asarray(profile["proportions"], dtype=float)
     finite = values[np.isfinite(values)]
     actual_counts, _ = np.histogram(finite, bins=edges)
