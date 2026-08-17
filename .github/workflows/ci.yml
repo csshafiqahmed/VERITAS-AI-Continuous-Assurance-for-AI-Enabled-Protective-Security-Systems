@@ -37,3 +37,22 @@ jobs:
       - run: uv run pytest --cov=veritas_ai --cov-report=term-missing
       - run: uv run veritas-ai demo --output runs/trl3
       - run: uv run veritas-ai verify --ledger runs/trl3/assurance_events.jsonl --public-key runs/trl3/public_key.pem
+
+  zeek-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.8.13"
+      - run: uv sync --all-groups --frozen
+      - name: Run the digest-pinned Zeek demonstration
+        run: uv run veritas-ai demo --regenerate-zeek --output runs/trl3-zeek
+      - name: Verify Zeek and signed-ledger evidence
+        env:
+          VERITAS_ZEEK_RUN: runs/trl3-zeek
+        run: uv run pytest -m zeek tests/test_zeek_integration.py
+      - run: uv run veritas-ai verify --ledger runs/trl3-zeek/assurance_events.jsonl --public-key runs/trl3-zeek/public_key.pem

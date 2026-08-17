@@ -4,6 +4,10 @@ from typing import Final
 
 SCHEMA_VERSION: Final = "1.0"
 DEFAULT_SEED: Final = 42
+ZEEK_VERSION: Final = "8.0.9"
+ZEEK_IMAGE: Final = (
+    "zeek/zeek:8.0.9@sha256:b705c8932220e5e9e7af3e6519c8b41188aa190066e456f16ab6cfb7d97b760d"
+)
 
 CLASSES: Final = [
     "benign",

@@ -10,13 +10,11 @@ from typing import Any
 
 from veritas_ai import __version__
 from veritas_ai.assurance import create_baseline, monitor_records
-from veritas_ai.constants import DEFAULT_SEED, SCHEMA_VERSION
+from veritas_ai.constants import DEFAULT_SEED, SCHEMA_VERSION, ZEEK_IMAGE
 from veritas_ai.data import SCENARIOS, generate_dataset, process_with_zeek
 from veritas_ai.io import read_jsonl, sha256_file, write_json
 from veritas_ai.ledger import sign_events, write_verification_report
 from veritas_ai.model import train_model
-
-ZEEK_IMAGE = "zeek/zeek:8.0.9"
 
 
 def _git_revision() -> str:
@@ -37,8 +35,7 @@ def run_demo(
     model_dir = output / "model"
     manifest = generate_dataset(data_dir, seed=seed)
     if regenerate_zeek:
-        process_with_zeek(data_dir, ZEEK_IMAGE)
-        manifest["zeek_mode"] = "official_container"
+        manifest = process_with_zeek(data_dir, ZEEK_IMAGE)
 
     model_manifest = train_model(data_dir / "observations.jsonl", model_dir, seed)
     baseline_path = output / "baseline.json"

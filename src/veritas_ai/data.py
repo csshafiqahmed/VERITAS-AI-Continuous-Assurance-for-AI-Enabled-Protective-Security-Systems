@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
-import json
+import os
+import re
 import shutil
 import socket
 import subprocess
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import dpkt
 import numpy as np
 
-from veritas_ai.constants import CLASSES, DEFAULT_SEED, SCHEMA_VERSION
-from veritas_ai.io import sha256_file, write_json, write_jsonl
+from veritas_ai.constants import CLASSES, DEFAULT_SEED, SCHEMA_VERSION, ZEEK_VERSION
+from veritas_ai.io import (
+    canonical_json,
+    read_json,
+    read_jsonl,
+    sha256_file,
+    write_json,
+    write_jsonl,
+)
 
 SCENARIOS = [
     "stable_operation",
@@ -23,6 +32,27 @@ SCENARIOS = [
     "model_replacement",
     "recovery_after_investigation",
 ]
+
+ZEEK_REQUIRED_FIELDS = frozenset(
+    {
+        "ts",
+        "uid",
+        "id.orig_h",
+        "id.orig_p",
+        "id.resp_h",
+        "id.resp_p",
+        "proto",
+        "duration",
+        "orig_bytes",
+        "resp_bytes",
+        "orig_pkts",
+        "resp_pkts",
+    }
+)
+_PINNED_ZEEK_IMAGE = re.compile(
+    r"zeek/zeek:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
+    flags=re.ASCII,
+)
 
 
 def _split_and_scenario(index: int) -> tuple[str, str]:
@@ -227,24 +257,103 @@ def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) 
     return manifest
 
 
-def process_with_zeek(data_dir: Path, image: str) -> Path:
-    """Process the generated PCAP with a pinned Zeek container."""
+def validate_zeek_conn_log(conn_log: Path, expected_records: int | None = None) -> dict[str, Any]:
+    """Validate a JSON Zeek connection log and return bounded provenance."""
+    records = read_jsonl(conn_log)
+    if not records:
+        raise ValueError("Zeek conn.log is empty")
+    if expected_records is not None and len(records) != expected_records:
+        raise ValueError(
+            f"Zeek conn.log contains {len(records)} records, expected {expected_records}"
+        )
+
+    timestamps: list[float] = []
+    protocols: Counter[str] = Counter()
+    for index, record in enumerate(records, start=1):
+        missing = sorted(ZEEK_REQUIRED_FIELDS.difference(record))
+        if missing:
+            raise ValueError(f"Zeek conn.log record {index} is missing {', '.join(missing)}")
+        canonical_json(record)
+        timestamp = record["ts"]
+        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+            raise ValueError(f"Zeek conn.log record {index} has an invalid timestamp")
+        protocol = record["proto"]
+        if not isinstance(protocol, str) or not protocol:
+            raise ValueError(f"Zeek conn.log record {index} has an invalid protocol")
+        timestamps.append(float(timestamp))
+        protocols[protocol] += 1
+
+    return {
+        "record_count": len(records),
+        "first_timestamp": min(timestamps),
+        "last_timestamp": max(timestamps),
+        "protocol_counts": dict(sorted(protocols.items())),
+        "required_fields": sorted(ZEEK_REQUIRED_FIELDS),
+    }
+
+
+def _docker_isolation_arguments() -> list[str]:
+    return [
+        "--rm",
+        "--network",
+        "none",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=64m",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+    ]
+
+
+def process_with_zeek(data_dir: Path, image: str) -> dict[str, Any]:
+    """Process the generated PCAP with an immutable official Zeek container."""
+    if _PINNED_ZEEK_IMAGE.fullmatch(image) is None:
+        raise ValueError(
+            "Zeek image must use the official repository, a patch tag, and a SHA-256 digest"
+        )
     if shutil.which("docker") is None:
         raise RuntimeError("Docker is required for --regenerate-zeek")
+
+    version_command = [
+        "docker",
+        "run",
+        *_docker_isolation_arguments(),
+        "--entrypoint",
+        "zeek",
+        image,
+        "--version",
+    ]
+    version_result = subprocess.run(
+        version_command,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    version_output = (version_result.stdout or version_result.stderr).strip()
+    if ZEEK_VERSION not in version_output:
+        raise RuntimeError(
+            f"Pinned container reported an unexpected Zeek version, {version_output}"
+        )
+
     zeek_output = data_dir / "zeek-output"
     zeek_output.mkdir(parents=True, exist_ok=True)
     command = [
         "docker",
         "run",
-        "--rm",
+        *_docker_isolation_arguments(),
         "-v",
         f"{data_dir.resolve()}:/input:ro",
         "-v",
         f"{zeek_output.resolve()}:/output",
         "-w",
         "/output",
-        image,
+        "--entrypoint",
         "zeek",
+        image,
         "-Cr",
         "/input/traffic.pcap",
         "LogAscii::use_json=T",
@@ -253,9 +362,18 @@ def process_with_zeek(data_dir: Path, image: str) -> Path:
     conn_log = zeek_output / "conn.log"
     if not conn_log.exists():
         raise RuntimeError("Zeek did not produce conn.log")
+
     manifest_path = data_dir / "dataset_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = read_json(manifest_path)
+    validation = validate_zeek_conn_log(conn_log, int(manifest["observation_count"]))
     manifest["zeek_mode"] = "official_container"
+    manifest["zeek"] = {
+        "image": image,
+        "version": version_output,
+        "network_access": "disabled",
+        "container_privileges": "all_capabilities_dropped",
+        **validation,
+    }
     manifest["files"]["zeek-output/conn.log"] = sha256_file(conn_log)
     write_json(manifest_path, manifest)
-    return conn_log
+    return manifest

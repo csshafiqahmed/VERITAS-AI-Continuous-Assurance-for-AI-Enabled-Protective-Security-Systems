@@ -26,11 +26,13 @@ Run the local dashboard after the demonstration.
 uv run veritas-ai dashboard --run runs/trl3
 ```
 
-To regenerate the network evidence through Zeek, use a machine with Docker.
+To regenerate the network evidence through Zeek, use a machine with Docker. The command runs the official Zeek 8.0.9 LTS image by immutable multi-platform digest. The container has no network access, all Linux capabilities are dropped, and its root filesystem is read-only.
 
 ```bash
 uv run veritas-ai demo --regenerate-zeek --output runs/trl3
 ```
+
+The validated JSON connection log is saved at `runs/trl3/data/zeek-output/conn.log`. Its hash, record count, image reference, reported Zeek version, and required-field contract are recorded in the dataset manifest.
 
 ## Assurance outcomes
 
