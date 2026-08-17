@@ -91,12 +91,11 @@ def test_process_with_zeek_records_pinned_provenance(
         commands.append(command)
         if "--version" in command:
             return subprocess.CompletedProcess(command, 0, "zeek version 8.0.9\n", "")
-        zeek_output = data_dir / "zeek-output"
-        zeek_output.mkdir(parents=True, exist_ok=True)
-        records = read_jsonl(data_dir / "conn.log")
-        for record in records:
-            record.pop("synthetic_zeek_compatible")
-        write_jsonl(zeek_output / "conn.log", records)
+        if command[:2] == ["docker", "cp"] and command[2].endswith(":/output/conn.log"):
+            records = read_jsonl(data_dir / "conn.log")
+            for record in records:
+                record.pop("synthetic_zeek_compatible")
+            write_jsonl(Path(command[3]), records)
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr("veritas_ai.data.shutil.which", lambda _: "/usr/bin/docker")
@@ -109,8 +108,30 @@ def test_process_with_zeek_records_pinned_provenance(
     assert manifest["feature_builder"]["observation_count"] == 2
     assert manifest["zeek"]["image"] == ZEEK_IMAGE
     assert manifest["zeek"]["network_access"] == "disabled"
-    assert all("none" in command for command in commands)
-    assert all("ALL" in command for command in commands)
+    assert manifest["zeek"]["container_root_filesystem"] == "read_only"
+    assert manifest["zeek"]["pcap_mount"] == "read_only"
+    assert manifest["zeek"]["pcap_transport"] == "docker_cp_with_managed_volumes"
+    assert manifest["zeek"]["transport_preparation_capability"] == "CHOWN_only"
+    zeek_create = next(
+        command
+        for command in commands
+        if command[:2] == ["docker", "create"] and "--workdir" in command
+    )
+    assert "none" in zeek_create
+    assert "ALL" in zeek_create
+    assert "--read-only" in zeek_create
+    assert "readonly" in " ".join(zeek_create)
+    assert " ".join(zeek_create).count("volume-nocopy") == 2
+    assert "-v" not in zeek_create
+    ownership_run = next(
+        command for command in commands if command[:2] == ["docker", "run"] and "CHOWN" in command
+    )
+    assert ownership_run[ownership_run.index("--user") + 1] == "0:0"
+    assert any(
+        command[:2] == ["docker", "cp"] and command[2] == str((data_dir / "traffic.pcap").resolve())
+        for command in commands
+    )
+    assert any(command[:3] == ["docker", "volume", "rm"] for command in commands)
 
 
 def test_process_with_zeek_rejects_mutable_image_reference(tmp_path: Path) -> None:
@@ -148,6 +169,40 @@ def test_process_with_zeek_requires_connection_log(
     )
     with pytest.raises(RuntimeError, match="did not produce"):
         process_with_zeek(data_dir, ZEEK_IMAGE)
+
+
+def test_process_with_zeek_cleans_managed_resources_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    generate_dataset(data_dir, count=1, seed=42)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if "--version" in command:
+            return subprocess.CompletedProcess(command, 0, "zeek version 8.0.9\n", "")
+        if command[:3] == ["docker", "start", "--attach"]:
+            raise subprocess.CalledProcessError(1, command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("veritas_ai.data.shutil.which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr("veritas_ai.data.subprocess.run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        process_with_zeek(data_dir, ZEEK_IMAGE)
+
+    assert len([command for command in commands if command[:3] == ["docker", "rm", "--force"]]) == 2
+    assert (
+        len(
+            [
+                command
+                for command in commands
+                if command[:4] == ["docker", "volume", "rm", "--force"]
+            ]
+        )
+        == 2
+    )
 
 
 def test_feature_builder_rejects_window_and_flow_mismatches(tmp_path: Path) -> None:

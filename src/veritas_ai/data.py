@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -490,9 +491,8 @@ def validate_zeek_conn_log(conn_log: Path, expected_records: int | None = None) 
     }
 
 
-def _docker_isolation_arguments() -> list[str]:
-    return [
-        "--rm",
+def _docker_isolation_arguments(*, remove: bool = True) -> list[str]:
+    arguments = [
         "--network",
         "none",
         "--cap-drop",
@@ -505,6 +505,9 @@ def _docker_isolation_arguments() -> list[str]:
         "--user",
         f"{os.getuid()}:{os.getgid()}",
     ]
+    if remove:
+        arguments.insert(0, "--rm")
+    return arguments
 
 
 def process_with_zeek(data_dir: Path, image: str) -> dict[str, Any]:
@@ -539,25 +542,147 @@ def process_with_zeek(data_dir: Path, image: str) -> dict[str, Any]:
 
     zeek_output = data_dir / "zeek-output"
     zeek_output.mkdir(parents=True, exist_ok=True)
-    command = [
-        "docker",
-        "run",
-        *_docker_isolation_arguments(),
-        "-v",
-        f"{data_dir.resolve()}:/input:ro",
-        "-v",
-        f"{zeek_output.resolve()}:/output",
-        "-w",
-        "/output",
-        "--entrypoint",
-        "zeek",
-        image,
-        "-Cr",
-        "/input/traffic.pcap",
-        "LogAscii::use_json=T",
-    ]
-    subprocess.run(command, check=True)
     conn_log = zeek_output / "conn.log"
+    object_token = secrets.token_hex(8)
+    input_volume = f"veritas-ai-zeek-input-{object_token}"
+    output_volume = f"veritas-ai-zeek-output-{object_token}"
+    staging_container = f"veritas-ai-zeek-stage-{object_token}"
+    zeek_container = f"veritas-ai-zeek-run-{object_token}"
+    created_containers: list[str] = []
+    created_volumes: list[str] = []
+    cleanup_failures: list[str] = []
+
+    try:
+        for volume in (input_volume, output_volume):
+            subprocess.run(
+                ["docker", "volume", "create", volume],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            created_volumes.append(volume)
+
+        staging_command = [
+            "docker",
+            "create",
+            "--name",
+            staging_container,
+            "--network",
+            "none",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--read-only",
+            "--mount",
+            f"type=volume,source={input_volume},target=/input,volume-nocopy",
+            "--entrypoint",
+            "/bin/true",
+            image,
+        ]
+        subprocess.run(staging_command, check=True, capture_output=True, text=True)
+        created_containers.append(staging_container)
+        subprocess.run(
+            [
+                "docker",
+                "cp",
+                str((data_dir / "traffic.pcap").resolve()),
+                f"{staging_container}:/input/traffic.pcap",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--cap-drop",
+                "ALL",
+                "--cap-add",
+                "CHOWN",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--read-only",
+                "--user",
+                "0:0",
+                "--mount",
+                f"type=volume,source={output_volume},target=/output,volume-nocopy",
+                "--entrypoint",
+                "chown",
+                image,
+                f"{os.getuid()}:{os.getgid()}",
+                "/output",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        command = [
+            "docker",
+            "create",
+            "--name",
+            zeek_container,
+            *_docker_isolation_arguments(remove=False),
+            "--mount",
+            f"type=volume,source={input_volume},target=/input,readonly,volume-nocopy",
+            "--mount",
+            f"type=volume,source={output_volume},target=/output,volume-nocopy",
+            "--workdir",
+            "/output",
+            "--entrypoint",
+            "zeek",
+            image,
+            "-Cr",
+            "/input/traffic.pcap",
+            "LogAscii::use_json=T",
+        ]
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        created_containers.append(zeek_container)
+        subprocess.run(
+            ["docker", "start", "--attach", zeek_container],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                "docker",
+                "cp",
+                f"{zeek_container}:/output/conn.log",
+                str(conn_log.resolve()),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        for container in reversed(created_containers):
+            cleanup = subprocess.run(
+                ["docker", "rm", "--force", container],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if cleanup.returncode != 0:
+                cleanup_failures.append(container)
+        for volume in reversed(created_volumes):
+            cleanup = subprocess.run(
+                ["docker", "volume", "rm", "--force", volume],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if cleanup.returncode != 0:
+                cleanup_failures.append(volume)
+
+    if cleanup_failures:
+        raise RuntimeError("Docker cleanup failed for " + ", ".join(sorted(cleanup_failures)))
     if not conn_log.exists():
         raise RuntimeError("Zeek did not produce conn.log")
 
@@ -577,6 +702,10 @@ def process_with_zeek(data_dir: Path, image: str) -> dict[str, Any]:
         "version": version_output,
         "network_access": "disabled",
         "container_privileges": "all_capabilities_dropped",
+        "container_root_filesystem": "read_only",
+        "pcap_mount": "read_only",
+        "pcap_transport": "docker_cp_with_managed_volumes",
+        "transport_preparation_capability": "CHOWN_only",
         **validation,
     }
     manifest["files"]["zeek-output/conn.log"] = sha256_file(conn_log)
