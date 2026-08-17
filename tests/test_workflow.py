@@ -18,6 +18,7 @@ def test_complete_demo_produces_verifiable_evidence(tmp_path: Path) -> None:
         "recovery_after_investigation",
     }
     assert summary["scenario_actions"]["model_replacement"] == "withdraw"
+    assert summary["scenario_actions"]["gradual_feature_drift"] == "recalibrate"
     assert verify_ledger(tmp_path / "run/assurance_events.jsonl", tmp_path / "run/public_key.pem")[
         "valid"
     ]
