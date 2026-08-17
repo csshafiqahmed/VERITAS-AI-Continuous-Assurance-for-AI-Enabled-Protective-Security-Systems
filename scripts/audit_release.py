@@ -21,6 +21,7 @@ PRIVATE_NAMES = {
 }
 PRIVATE_PATH_WORDS = ("partner-discussion", "proposal", "screenshot")
 NON_HUMAN_IDENTIFIERS = ("chatgpt", "openai", "claude", "codex", "copilot")
+IGNORED_BUILD_HELPERS = {".gitignore"}
 PRIVATE_KEY_BEGIN_MARKERS = (
     b"-----BEGIN PRIVATE KEY-----",
     b"-----BEGIN OPENSSH PRIVATE KEY-----",
@@ -161,9 +162,22 @@ def audit_tar(path: Path) -> set[str]:
     return names
 
 
+def _release_asset_files(artifacts: Path) -> list[Path]:
+    files: list[Path] = []
+    for path in artifacts.iterdir():
+        if path.name == "SHA256SUMS" or path.name in IGNORED_BUILD_HELPERS:
+            continue
+        if path.name.startswith("."):
+            raise ValueError(f"Unexpected hidden release file  {path.name}")
+        if not path.is_file():
+            raise ValueError(f"Unexpected release directory  {path.name}")
+        files.append(path)
+    return sorted(files)
+
+
 def write_checksums(artifacts: Path) -> Path:
     checksum_path = artifacts / "SHA256SUMS"
-    files = sorted(path for path in artifacts.iterdir() if path.is_file() and path != checksum_path)
+    files = _release_asset_files(artifacts)
     if not files:
         raise ValueError("No release assets are available for checksumming")
     checksum_path.write_text(
@@ -175,9 +189,7 @@ def write_checksums(artifacts: Path) -> Path:
 
 def audit_checksums(artifacts: Path) -> None:
     checksum_path = artifacts / "SHA256SUMS"
-    expected_files = {
-        path.name for path in artifacts.iterdir() if path.is_file() and path != checksum_path
-    }
+    expected_files = {path.name for path in _release_asset_files(artifacts)}
     recorded: set[str] = set()
     for line in checksum_path.read_text(encoding="utf-8").splitlines():
         digest, separator, name = line.partition("  ")

@@ -70,5 +70,14 @@ def test_demo_cast_uses_verified_values(tmp_path: Path) -> None:
 def test_checksums_cover_each_asset_once(tmp_path: Path) -> None:
     (tmp_path / "one.whl").write_bytes(b"one")
     (tmp_path / "two.tar.gz").write_bytes(b"two")
+    (tmp_path / ".gitignore").write_text("*\n", encoding="utf-8")
     write_checksums(tmp_path)
     audit_checksums(tmp_path)
+    assert ".gitignore" not in (tmp_path / "SHA256SUMS").read_text(encoding="utf-8")
+
+
+def test_checksums_reject_unexpected_hidden_file(tmp_path: Path) -> None:
+    (tmp_path / "one.whl").write_bytes(b"one")
+    (tmp_path / ".secret").write_bytes(b"not public")
+    with pytest.raises(ValueError, match="Unexpected hidden release file"):
+        write_checksums(tmp_path)
