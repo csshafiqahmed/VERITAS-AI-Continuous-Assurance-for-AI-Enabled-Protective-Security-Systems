@@ -21,7 +21,7 @@ classifiers = [
   "Topic :: Security",
 ]
 dependencies = [
-  "cryptography>=44,<47",
+  "cryptography>=50,<51",
   "dpkt>=1.9.8,<2",
   "numpy>=2,<3",
   "pydantic>=2.10,<3",
@@ -46,7 +46,7 @@ dev = [
   "mkdocs-material>=9.6,<10",
   "mypy>=1.15,<2",
   "pip-audit>=2.8,<3",
-  "pytest>=8.3,<9",
+  "pytest>=9.0.3,<10",
   "pytest-cov>=6,<8",
   "ruff>=0.11,<1",
 ]
