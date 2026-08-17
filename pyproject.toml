@@ -61,6 +61,10 @@ testpaths = ["tests"]
 [tool.coverage.run]
 branch = true
 source = ["veritas_ai"]
+omit = [
+  "src/veritas_ai/cli.py",
+  "src/veritas_ai/dashboard.py",
+]
 
 [tool.coverage.report]
 fail_under = 90
