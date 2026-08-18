@@ -254,9 +254,9 @@ jobs:
           mkdir -p "${DOCKER_CONFIG}"
           for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             if docker buildx imagetools inspect "${RELEASE_IMAGE}" \
-              > "${RUNNER_TEMP}/veritas-container-index.txt"; then
-              grep -q 'linux/amd64' "${RUNNER_TEMP}/veritas-container-index.txt"
-              grep -q 'linux/arm64' "${RUNNER_TEMP}/veritas-container-index.txt"
+              > "${RUNNER_TEMP}/veritas-container-index.txt" \
+              && grep -q 'linux/amd64' "${RUNNER_TEMP}/veritas-container-index.txt" \
+              && grep -q 'linux/arm64' "${RUNNER_TEMP}/veritas-container-index.txt"; then
               cat "${RUNNER_TEMP}/veritas-container-index.txt"
               exit 0
             fi
