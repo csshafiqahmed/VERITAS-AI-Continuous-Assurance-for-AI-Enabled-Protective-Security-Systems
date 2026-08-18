@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/veritas-ai/1.0/verification_report.schema.json",
+  "title": "VERITAS-AI ledger verification report",
+  "type": "object",
+  "required": ["schema_version", "valid", "events_checked", "error", "ledger_sha256"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "valid": {"type": "boolean"},
+    "events_checked": {"type": "integer", "minimum": 0},
+    "error": {"type": ["string", "null"]},
+    "ledger_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

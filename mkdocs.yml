@@ -1,0 +1,28 @@
+site_name: VERITAS-AI
+site_description: Continuous assurance proof of concept for AI-enabled protective security systems
+site_url: https://csshafiqahmed.github.io/VERITAS-AI-Continuous-Assurance-for-AI-Enabled-Protective-Security-Systems/
+repo_url: https://github.com/csshafiqahmed/VERITAS-AI-Continuous-Assurance-for-AI-Enabled-Protective-Security-Systems
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Specification: specification.md
+  - Architecture: architecture.md
+  - Method: method.md
+  - Threat model: threat-model.md
+  - Data card: data-card.md
+  - Model card: model-card.md
+  - Schemas: schemas.md
+  - Reproducibility: reproducibility.md
+  - Release process: release-process.md
+  - TRL 3 evidence: trl3-evidence.md
+  - Limitations: limitations.md
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+strict: true

@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using this metadata."
+title: "VERITAS-AI Continuous Assurance for AI-Enabled Protective Security Systems"
+type: software
+version: 0.1.0
+date-released: 2026-08-25
+authors:
+  - family-names: Ahmed
+    given-names: Shafiq
+    affiliation: University of Essex
+repository-code: "https://github.com/csshafiqahmed/VERITAS-AI-Continuous-Assurance-for-AI-Enabled-Protective-Security-Systems"
+license: Apache-2.0

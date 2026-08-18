@@ -1,0 +1,91 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "veritas-ai-assurance"
+version = "0.1.0"
+description = "A TRL 3 proof of concept for continuous assurance of AI-enabled protective security systems"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+  { name = "Shafiq Ahmed", email = "csshafiqahmed@gmail.com" },
+]
+keywords = ["ai-assurance", "cybersecurity", "model-monitoring", "zeek", "xgboost"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security",
+]
+dependencies = [
+  "cryptography>=50,<51",
+  "dpkt>=1.9.8,<2",
+  "numpy>=2,<3",
+  "pydantic>=2.10,<3",
+  "scikit-learn>=1.6,<2",
+  "streamlit>=1.45,<2",
+  "typer>=0.15,<1",
+  "xgboost>=3,<4",
+]
+
+[project.urls]
+Homepage = "https://github.com/csshafiqahmed/VERITAS-AI-Continuous-Assurance-for-AI-Enabled-Protective-Security-Systems"
+Documentation = "https://csshafiqahmed.github.io/VERITAS-AI-Continuous-Assurance-for-AI-Enabled-Protective-Security-Systems/"
+Issues = "https://github.com/csshafiqahmed/VERITAS-AI-Continuous-Assurance-for-AI-Enabled-Protective-Security-Systems/issues"
+
+[project.scripts]
+veritas-ai = "veritas_ai.cli:app"
+
+[dependency-groups]
+dev = [
+  "build>=1.2,<2",
+  "mkdocs>=1.6,<2",
+  "mkdocs-material>=9.6,<10",
+  "mypy>=1.15,<2",
+  "pip-audit>=2.8,<3",
+  "pytest>=9.0.3,<10",
+  "pytest-cov>=6,<8",
+  "ruff>=0.11,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/veritas_ai"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config -ra"
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+  "zeek: requires evidence produced by the pinned Docker-backed Zeek integration",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["veritas_ai"]
+omit = [
+  "src/veritas_ai/cli.py",
+  "src/veritas_ai/dashboard.py",
+]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["veritas_ai"]
+
+[[tool.mypy.overrides]]
+module = ["dpkt", "sklearn.*"]
+ignore_missing_imports = true

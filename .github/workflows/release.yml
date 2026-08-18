@@ -1,0 +1,263 @@
+name: Release Candidate
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  VERSION: "0.1.0"
+  IMAGE_NAME: ghcr.io/csshafiqahmed/veritas-ai-continuous-assurance-for-ai-enabled-protective-security-systems
+
+jobs:
+  policy:
+    name: release-policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+      - name: Audit release identity and private exclusions
+        run: python scripts/audit_release.py --expected-version "${VERSION}"
+      - name: Enforce tag and licence authority
+        if: github.event_name == 'push'
+        env:
+          RELEASE_AUTHORISED: ${{ vars.APACHE_2_RELEASE_AUTHORISED }}
+        run: |
+          test "${GITHUB_REF_NAME}" = "v${VERSION}"
+          test "${RELEASE_AUTHORISED}" = "true"
+
+  assets:
+    name: release-assets
+    needs: policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.8.13"
+      - run: uv sync --all-groups --frozen
+      - name: Audit locked dependencies
+        run: uv run pip-audit --local
+      - name: Prepare release directories
+        run: |
+          mkdir -p release-assets
+          mkdir -p release-work
+      - name: Build wheel and source distribution
+        run: uv build --out-dir release-assets
+      - name: Generate evidence through the pinned Zeek container
+        run: >-
+          uv run veritas-ai demo --regenerate-zeek --output release-work/trl3
+          > release-work/demo-output.json
+      - name: Verify the signed evidence ledger
+        run: >-
+          uv run veritas-ai verify
+          --ledger release-work/trl3/assurance_events.jsonl
+          --public-key release-work/trl3/public_key.pem
+          > release-work/verification-output.json
+      - name: Build the evidence bundle
+        run: >-
+          python scripts/build_evidence_bundle.py
+          --run-dir release-work/trl3
+          --output release-assets/veritas-ai-${VERSION}-evidence.tar.gz
+          --version "${VERSION}"
+      - name: Build the reproducible demonstration recording
+        run: >-
+          python scripts/build_demo_cast.py
+          --summary release-work/trl3/run_summary.json
+          --verification release-work/trl3/verification_report.json
+          --output release-assets/veritas-ai-${VERSION}-demo.cast
+      - name: Generate SPDX JSON SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: .
+          format: spdx-json
+          output-file: release-assets/veritas-ai-${{ env.VERSION }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+          dependency-snapshot: false
+      - name: Write checksums and audit every release asset
+        run: >-
+          python scripts/audit_release.py
+          --expected-version "${VERSION}"
+          --artifacts release-assets
+          --write-checksums
+      - name: Attest release provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: release-assets/*
+      - name: Attest the package SBOM
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: |
+            release-assets/veritas_ai_assurance-${{ env.VERSION }}-py3-none-any.whl
+            release-assets/veritas_ai_assurance-${{ env.VERSION }}.tar.gz
+          sbom-path: release-assets/veritas-ai-${{ env.VERSION }}.spdx.json
+      - name: Verify the published provenance attestation
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh attestation verify
+          release-assets/veritas_ai_assurance-${VERSION}-py3-none-any.whl
+          --repo "${GITHUB_REPOSITORY}"
+      - name: Upload release candidate assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: veritas-ai-${{ env.VERSION }}-release-assets
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 14
+
+  container:
+    name: container-candidate
+    needs: policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - name: Record immutable image labels
+        id: labels
+        run: echo "created=$(git show -s --format=%cI HEAD)" >> "${GITHUB_OUTPUT}"
+      - name: Build the local smoke-test image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: veritas-ai:release-candidate
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.labels.outputs.created }}
+          cache-from: type=gha,scope=release-container
+          cache-to: type=gha,mode=max,scope=release-container
+      - name: Run the anonymous hardened container smoke test
+        run: |
+          docker run --rm --read-only --network none --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,nosuid,size=2g veritas-ai:release-candidate --help
+          docker run --rm --read-only --network none --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,nosuid,size=2g veritas-ai:release-candidate demo --output /tmp/trl3 > container-demo.json
+      - name: Verify both release architectures without publishing
+        if: github.event_name != 'push'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          outputs: type=cacheonly
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.labels.outputs.created }}
+          cache-from: type=gha,scope=release-container
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set release image tags and labels
+        if: github.event_name == 'push'
+        id: metadata
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ github.ref_name }}
+            type=semver,pattern={{version}}
+          labels: |
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.labels.outputs.created }}
+      - name: Publish the multi-platform image
+        if: github.event_name == 'push'
+        id: publish
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.labels.outputs.created }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=release-container
+          cache-to: type=gha,mode=max,scope=release-container
+      - name: Attest the published container
+        if: github.event_name == 'push'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+  publish:
+    name: publish-prerelease
+    if: github.event_name == 'push'
+    needs: [assets, container]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: veritas-ai-${{ env.VERSION }}-release-assets
+          path: release-assets
+      - name: Verify release checksums
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS
+      - name: Make the linked GHCR package public
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh api --method PATCH
+          /user/packages/container/veritas-ai-continuous-assurance-for-ai-enabled-protective-security-systems
+          -f visibility=public
+      - name: Create the public pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}" release-assets/*
+          --verify-tag
+          --prerelease
+          --title "VERITAS-AI ${GITHUB_REF_NAME}"
+          --notes-file .github/release-notes/v0.1.0.md

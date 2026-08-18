@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/veritas-ai/1.0/baseline.schema.json",
+  "title": "VERITAS-AI assurance baseline",
+  "type": "object",
+  "required": ["schema_version", "model_sha256", "policy_sha256", "thresholds", "labelled_metrics", "feature_profiles"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "model_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "policy_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "thresholds": {"type": "object"},
+    "labelled_metrics": {"type": "object"},
+    "feature_profiles": {"type": "object"}
+  },
+  "additionalProperties": true
+}
