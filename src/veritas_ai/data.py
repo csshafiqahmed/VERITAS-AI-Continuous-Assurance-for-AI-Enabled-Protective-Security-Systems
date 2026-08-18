@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -291,13 +292,19 @@ def attach_ground_truth(records: list[dict[str, Any]], labels_path: Path) -> lis
     return joined
 
 
-def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) -> dict[str, Any]:
+def generate_dataset(
+    output: Path,
+    count: int = 5000,
+    seed: int = DEFAULT_SEED,
+    progress: Callable[[int, int], None] | None = None,
+) -> dict[str, Any]:
     """Generate safe labelled observations, auth events, labels, PCAP, and Zeek-compatible JSON."""
     output.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
     auth_events: list[dict[str, Any]] = []
     labels: list[dict[str, Any]] = []
     zeek_records: list[dict[str, Any]] = []
+    recovery_templates: list[tuple[str, dict[str, float]]] = []
     epoch = 1_700_000_000.0
     pcap_path = output / "traffic.pcap"
 
@@ -305,15 +312,26 @@ def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) 
         writer = dpkt.pcap.Writer(handle, snaplen=65535)
         for index in range(count):
             split, scenario = _split_and_scenario(index)
-            label = str(rng.choice(CLASSES, p=[0.60, 0.10, 0.10, 0.10, 0.10]))
-            features = _class_features(label, rng)
-            if scenario == "benign_workload_change":
-                features["connection_rate"] *= 1.18
-            elif scenario == "partial_telemetry_loss":
-                features["telemetry_missing"] = 1.0 if index % 10 == 0 else 0.0
-            elif scenario == "gradual_feature_drift":
-                progress = ((index - 4250) % 250) / 249
-                features["resp_pkts"] += progress * 4
+            if scenario == "recovery_after_investigation":
+                if len(recovery_templates) != 500:
+                    raise ValueError("Recovery generation requires all 500 baseline templates")
+                recovery_offset = (index - 4750) % 250
+                template_lane = 0 if recovery_offset < 125 else 1
+                template_index = template_lane + 4 * (recovery_offset % 125)
+                label, template = recovery_templates[template_index]
+                features = dict(template)
+            else:
+                label = str(rng.choice(CLASSES, p=[0.60, 0.10, 0.10, 0.10, 0.10]))
+                features = _class_features(label, rng)
+                if scenario == "benign_workload_change":
+                    features["connection_rate"] *= 1.18
+                elif scenario == "partial_telemetry_loss":
+                    features["telemetry_missing"] = 1.0 if index % 10 == 0 else 0.0
+                elif scenario == "gradual_feature_drift":
+                    drift_progress = ((index - 4250) % 250) / 249
+                    features["resp_pkts"] += drift_progress * 4
+                if split == "baseline":
+                    recovery_templates.append((label, dict(features)))
 
             source = f"10.{(index // 60000) % 250}.{(index // 250) % 250}.{index % 250 + 1}"
             timestamp = epoch + index * WINDOW_SECONDS
@@ -422,6 +440,9 @@ def generate_dataset(output: Path, count: int = 5000, seed: int = DEFAULT_SEED) 
                     "scenario": scenario,
                 }
             )
+            completed = index + 1
+            if progress is not None and (completed % 250 == 0 or completed == count):
+                progress(completed, count)
 
     write_jsonl(output / "auth.jsonl", auth_events)
     write_jsonl(output / "labels.jsonl", labels)

@@ -1,6 +1,8 @@
 import json
+import subprocess
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from veritas_ai.cli import app
@@ -98,3 +100,49 @@ def test_separate_command_workflows_preserve_label_boundary(tmp_path: Path) -> N
     assert unlabelled["labelled_metrics"] is None
     assert unlabelled["ece_increase"] is None
     assert unlabelled["maximum_fnr_increase"] is None
+
+
+def test_dashboard_command_supports_guided_and_completed_modes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    calls: list[list[str]] = []
+
+    def controlled(command: list[str], check: bool) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("veritas_ai.cli.subprocess.run", controlled)
+    guided = runner.invoke(
+        app,
+        ["dashboard", "--runs-root", str(tmp_path / "reviewer")],
+    )
+    assert guided.exit_code == 0, guided.output
+    assert "--runs-root" in calls[-1]
+    assert "--run" not in calls[-1]
+    assert "127.0.0.1" in calls[-1]
+
+    completed_run = tmp_path / "completed"
+    completed_run.mkdir()
+    evidence = runner.invoke(
+        app,
+        [
+            "dashboard",
+            "--run",
+            str(completed_run),
+            "--runs-root",
+            str(tmp_path / "reviewer"),
+            "--address",
+            "0.0.0.0",
+        ],
+    )
+    assert evidence.exit_code == 0, evidence.output
+    assert calls[-1][-2:] == ["--run", str(completed_run.resolve())]
+    assert "0.0.0.0" in calls[-1]
+
+
+def test_dashboard_command_rejects_unbounded_address() -> None:
+    result = CliRunner().invoke(app, ["dashboard", "--address", "192.0.2.10"])
+    assert result.exit_code != 0
+    assert "Address must be 127.0.0.1 or 0.0.0.0" in result.output

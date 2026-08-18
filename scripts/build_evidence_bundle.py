@@ -36,6 +36,7 @@ PUBLIC_FILES = {
     "NOTICE": "NOTICE",
     "docs/trl3-evidence.md": "TRL3_EVIDENCE.md",
 }
+INTERNAL_RUN_PATHS = frozenset({".guided-state.json"})
 
 
 def sha256_file(path: Path) -> str:
@@ -93,6 +94,17 @@ def build_bundle(run_dir: Path, output: Path, version: str, repository: Path) ->
     if missing:
         raise ValueError(f"Demonstration evidence is incomplete, missing {', '.join(missing)}")
 
+    release_paths: list[Path] = []
+    for path in sorted(run_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = PurePosixPath(path.relative_to(run_dir).as_posix())
+        if relative.as_posix() in INTERNAL_RUN_PATHS:
+            continue
+        if any(part.startswith(".") for part in relative.parts):
+            raise ValueError(f"Unexpected hidden run file {relative}")
+        release_paths.append(path)
+
     output.parent.mkdir(parents=True, exist_ok=True)
     prefix = f"veritas-ai-{version}-evidence"
     with (
@@ -102,10 +114,9 @@ def build_bundle(run_dir: Path, output: Path, version: str, repository: Path) ->
     ):
         for source_name, target_name in sorted(PUBLIC_FILES.items()):
             _add_file(archive, repository / source_name, f"{prefix}/{target_name}")
-        for path in sorted(run_dir.rglob("*")):
-            if path.is_file():
-                relative = path.relative_to(run_dir).as_posix()
-                _add_file(archive, path, f"{prefix}/trl3/{relative}")
+        for path in release_paths:
+            relative = path.relative_to(run_dir).as_posix()
+            _add_file(archive, path, f"{prefix}/trl3/{relative}")
     return sha256_file(output)
 
 

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/veritas-ai/1.0/assurance_event.schema.json",
+  "title": "VERITAS-AI signed assurance ledger record version 1.0",
+  "type": "object",
+  "required": ["schema_version", "index", "previous_hash", "record_type", "event", "event_hash", "signature"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "index": {"type": "integer", "minimum": 0},
+    "previous_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "record_type": {"enum": ["event", "seal"]},
+    "event": {"type": "object"},
+    "event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "signature": {"type": "string"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"record_type": {"const": "seal"}}},
+      "then": {
+        "properties": {
+          "event": {
+            "type": "object",
+            "required": ["event_count", "terminal_event_hash"],
+            "properties": {
+              "event_count": {"type": "integer", "minimum": 0},
+              "terminal_event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

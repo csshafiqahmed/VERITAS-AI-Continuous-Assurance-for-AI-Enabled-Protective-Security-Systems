@@ -12,7 +12,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from veritas_ai.constants import SCHEMA_VERSION
+from veritas_ai.constants import SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS
 from veritas_ai.io import canonical_json, sha256_bytes, write_json, write_jsonl
 
 LEDGER_SEAL_TYPE = "seal"
@@ -25,9 +25,10 @@ def _signed_record(
     previous_hash: str,
     record_type: str,
     event: dict[str, Any],
+    schema_version: str,
 ) -> dict[str, Any]:
     unsigned = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": schema_version,
         "index": index,
         "previous_hash": previous_hash,
         "record_type": record_type,
@@ -39,8 +40,17 @@ def _signed_record(
 
 
 def sign_events(
-    events: list[dict[str, Any]], ledger_path: Path, public_key_path: Path
+    events: list[dict[str, Any]],
+    ledger_path: Path,
+    public_key_path: Path,
+    *,
+    schema_version: str = SCHEMA_VERSION,
+    evidence_bindings: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise ValueError(f"Unsupported signing schema version {schema_version}")
+    if evidence_bindings is not None and schema_version != SCHEMA_VERSION:
+        raise ValueError("Signed evidence bindings require the current schema version")
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
     previous_hash = "0" * 64
@@ -52,18 +62,24 @@ def sign_events(
             previous_hash,
             LEDGER_EVENT_TYPE,
             event,
+            schema_version,
         )
         records.append(record)
         previous_hash = str(record["event_hash"])
+    seal_event: dict[str, Any] = {
+        "event_count": len(events),
+        "terminal_event_hash": previous_hash,
+    }
+    if evidence_bindings is not None:
+        canonical_json(evidence_bindings)
+        seal_event["evidence_bindings"] = evidence_bindings
     seal = _signed_record(
         private_key,
         len(events),
         previous_hash,
         LEDGER_SEAL_TYPE,
-        {
-            "event_count": len(events),
-            "terminal_event_hash": previous_hash,
-        },
+        seal_event,
+        schema_version,
     )
     records.append(seal)
     write_jsonl(ledger_path, records)
@@ -84,6 +100,8 @@ def verify_ledger(ledger_path: Path, public_key_path: Path) -> dict[str, Any]:
     previous_hash = "0" * 64
     checked = 0
     error: str | None = None
+    ledger_schema_version: str | None = None
+    evidence_bindings: dict[str, Any] | None = None
     try:
         lines = [
             line for line in ledger_path.read_text(encoding="utf-8").splitlines() if line.strip()
@@ -91,8 +109,13 @@ def verify_ledger(ledger_path: Path, public_key_path: Path) -> dict[str, Any]:
         seal_seen = False
         for line_number, line in enumerate(lines, start=1):
             record = json.loads(line)
-            if record["schema_version"] != SCHEMA_VERSION:
+            record_schema_version = record["schema_version"]
+            if record_schema_version not in SUPPORTED_SCHEMA_VERSIONS:
                 raise ValueError(f"Unsupported schema version at line {line_number}")
+            if ledger_schema_version is None:
+                ledger_schema_version = str(record_schema_version)
+            elif record_schema_version != ledger_schema_version:
+                raise ValueError(f"Mixed schema versions at line {line_number}")
             unsigned = {
                 "schema_version": record["schema_version"],
                 "index": record["index"],
@@ -124,6 +147,10 @@ def verify_ledger(ledger_path: Path, public_key_path: Path) -> dict[str, Any]:
                     raise ValueError(f"Terminal event count mismatch at line {line_number}")
                 if event.get("terminal_event_hash") != previous_hash:
                     raise ValueError(f"Terminal event hash mismatch at line {line_number}")
+                bound_evidence = event.get("evidence_bindings")
+                if bound_evidence is not None and not isinstance(bound_evidence, dict):
+                    raise ValueError(f"Evidence bindings are not an object at line {line_number}")
+                evidence_bindings = bound_evidence
                 seal_seen = True
             else:
                 raise ValueError(f"Unknown record type at line {line_number}")
@@ -139,12 +166,15 @@ def verify_ledger(ledger_path: Path, public_key_path: Path) -> dict[str, Any]:
         json.JSONDecodeError,
     ) as exc:
         error = str(exc) or exc.__class__.__name__
+        evidence_bindings = None
     return {
         "schema_version": SCHEMA_VERSION,
+        "ledger_schema_version": ledger_schema_version,
         "valid": error is None,
         "events_checked": checked,
         "error": error,
         "ledger_sha256": sha256_bytes(ledger_path.read_bytes()),
+        "evidence_bindings": evidence_bindings,
     }
 
 

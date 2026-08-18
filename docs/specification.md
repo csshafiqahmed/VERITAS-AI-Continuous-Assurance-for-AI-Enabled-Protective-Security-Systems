@@ -28,8 +28,32 @@ The independent `train` command performs this three-source join before fitting t
 - A public Ed25519 verification key
 - A machine-readable verification report
 
+## Guided reviewer demonstration
+
+Version 0.2.0 provides a two-mode Streamlit application. Guided Demonstration executes the laboratory workflow. Signed Evidence Review opens only after the ledger and summary have been reconciled.
+
+The guided workflow generates 5,000 windows, trains the XGBoost detector and logistic comparison, establishes the reference envelope, and evaluates six controlled scenarios. Partial telemetry loss is evaluated without ground truth. Its accuracy, calibration, and false-negative measures must remain unavailable.
+
+The workflow pauses after the model-integrity failure. A reviewer acknowledgement then permits two ordered recovery windows to be evaluated. Both windows must remain within the warning envelope and preserve model and policy integrity before the signed recovery event can recommend `continue`.
+
+Docker-backed Zeek processing is optional in the reviewer interface. The portable route uses generated Zeek-format records and states that limitation explicitly. Selecting Zeek requires the digest-pinned container route to complete. The workflow must not silently fall back after Zeek has been selected.
+
+Runtime progress is observational. A stage is marked complete only after the associated computation or artifact check completes. Progress events are not public assurance evidence and are not placed in the signed ledger.
+
+## Schema compatibility
+
+New evidence uses schema version `1.1.0`. Ledger verification continues to accept internally consistent version `1.0` ledgers from the first release. Mixed-version ledgers and unknown schema versions are rejected.
+
+The version `1.1.0` assurance event can carry an operator acknowledgement and two signed recovery checks. The run summary records the demonstration mode, telemetry source, Zeek status, acknowledgement state, and recovery-window count.
+
 ## Evidence boundary
 
 Labelled metrics are unavailable when monitoring data have no ground truth. The system must not infer current accuracy, calibration, or false-negative rates from drift alone. All decisions are advisory and require human interpretation.
 
-The terminal ledger seal signs the final event hash and expected event count. Verification fails if a signed event suffix or the seal itself is removed. The recorded Git revision is resolved only from the source project checkout. Installed wheels outside that checkout report the revision as unavailable rather than adopting the revision of an unrelated working directory.
+The acknowledgement records a laboratory workflow action. It does not identify or legally attest an operator.
+
+The terminal ledger seal signs the final event hash and expected event count. In schema version `1.1.0`, it also signs hashes for the baseline, dataset manifest, native model, and model manifest. Run identity, seed, environment, TRL wording, limitations, and demonstration settings are protected by the same seal. Verification fails if a signed event suffix or the seal itself is removed.
+
+The checkpoint stores a digest of the first five substantive scenario results. Runtime timestamps and measured inference latency are excluded because they change when the evidence is reconstructed. All decision fields, metrics, integrity results, and reasons remain inside the digest. Recovery is refused if the reconstructed evidence or action sequence differs from the acknowledged checkpoint.
+
+The recorded Git revision is resolved only from the source project checkout. Installed wheels outside that checkout report the revision as unavailable rather than adopting the revision of an unrelated working directory.

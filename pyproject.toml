@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "veritas-ai-assurance"
-version = "0.1.0"
+version = "0.2.0"
 description = "A TRL 3 proof of concept for continuous assurance of AI-enabled protective security systems"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -42,6 +42,7 @@ veritas-ai = "veritas_ai.cli:app"
 [dependency-groups]
 dev = [
   "build>=1.2,<2",
+  "jsonschema>=4.25,<5",
   "mkdocs>=1.6,<2",
   "mkdocs-material>=9.6,<10",
   "mypy>=1.15,<2",

@@ -23,6 +23,10 @@ The threat model focuses on assurance evidence rather than attempting to cover e
 - SHA-256 hashes bind models, policies, schemas, and event order
 - Ed25519 signatures authenticate each ledger record and its mandatory terminal seal
 - The signed terminal event count and hash make removal of a valid ledger suffix detectable
+- The current terminal seal binds core artifact hashes and displayed run provenance
+- The acknowledgement checkpoint binds substantive first-phase evidence before recovery
+- Regular-file and path-boundary checks reject symlinked or escaping evidence paths
+- Dataset file hashes, model identity, baseline identity, summary metadata, and the stored verification report are reconciled before display or download
 - Strict schema validation rejects malformed and non-finite data
 - Native XGBoost JSON avoids executable deserialisation
 - Private signing material is never written to release artifacts
