@@ -4,12 +4,14 @@ from pathlib import Path
 
 import pytest
 
+import veritas_ai.workflow as workflow
 from veritas_ai.io import read_jsonl
 from veritas_ai.ledger import verify_ledger
 from veritas_ai.workflow import (
     _evaluate_recovery,
     _git_revision,
     _ProgressEmitter,
+    _provisional_evidence_sha256,
     complete_guided_demo,
     prepare_guided_demo,
     read_guided_state,
@@ -45,6 +47,13 @@ def test_complete_demo_produces_verifiable_evidence(tmp_path: Path) -> None:
     report = json.loads((tmp_path / "run/verification_report.json").read_text())
     assert report["events_checked"] == 6
     assert report["ledger_schema_version"] == "1.1.0"
+    assert report["evidence_bindings"]["version"] == "0.2.0"
+    assert set(report["evidence_bindings"]["artifacts"]) == {
+        "baseline.json",
+        "data/dataset_manifest.json",
+        "model/model.json",
+        "model/model_manifest.json",
+    }
     assert summary["version"] == "0.2.0"
     assert summary["demonstration"] == {
         "mode": "automatic_cli",
@@ -105,6 +114,43 @@ def test_guided_demo_requires_acknowledgement_before_signing(tmp_path: Path) -> 
     assert summary["demonstration"]["mode"] == "guided_reviewer"
     assert summary["ledger_valid"] is True
     assert read_guided_state(run_dir)["phase"] == "completed"
+
+
+def test_provisional_digest_ignores_only_volatile_runtime_fields() -> None:
+    original = [{"scenario": "stable_operation", "action": "continue", "maximum_psi": 0.02}]
+    volatile_change = [
+        {
+            **original[0],
+            "observed_at": "later",
+            "inference_latency_ms": 99.0,
+        }
+    ]
+    substantive_change = [{**original[0], "maximum_psi": 0.03}]
+
+    assert _provisional_evidence_sha256(original) == _provisional_evidence_sha256(volatile_change)
+    assert _provisional_evidence_sha256(original) != _provisional_evidence_sha256(
+        substantive_change
+    )
+
+
+def test_completion_rejects_reconstructed_checkpoint_difference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "guided"
+    prepare_guided_demo(run_dir)
+    original_evaluator = workflow._evaluate_first_phase
+
+    def changed_evidence(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        events = original_evaluator(*args, **kwargs)
+        events[0]["maximum_psi"] = float(events[0]["maximum_psi"]) + 0.001
+        return events
+
+    monkeypatch.setattr(workflow, "_evaluate_first_phase", changed_evidence)
+
+    with pytest.raises(ValueError, match="does not match the acknowledged checkpoint"):
+        complete_guided_demo(run_dir, operator_acknowledged=True)
+    assert read_guided_state(run_dir)["phase"] == "failed"
 
 
 def test_failed_recovery_window_prevents_continue(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -21,7 +21,14 @@ from veritas_ai.constants import (
     ZEEK_IMAGE,
 )
 from veritas_ai.data import SCENARIOS, generate_dataset, process_with_zeek
-from veritas_ai.io import read_json, read_jsonl, sha256_file, write_json
+from veritas_ai.io import (
+    canonical_json,
+    read_json,
+    read_jsonl,
+    sha256_bytes,
+    sha256_file,
+    write_json,
+)
 from veritas_ai.ledger import sign_events, write_verification_report
 from veritas_ai.model import train_model
 
@@ -33,6 +40,18 @@ RUN_STATE_NAME = ".guided-state.json"
 FIRST_PHASE_SCENARIOS = SCENARIOS[:-1]
 RECOVERY_SCENARIO = "recovery_after_investigation"
 _ACTION_SEVERITY = {"continue": 0, "investigate": 1, "recalibrate": 2, "withdraw": 3}
+_BOUND_ARTIFACTS = (
+    "baseline.json",
+    "data/dataset_manifest.json",
+    "model/model.json",
+    "model/model_manifest.json",
+)
+_LIMITATIONS = [
+    "synthetic_data",
+    "no_external_partner_validation",
+    "no_representative_operational_environment",
+    "not_trl_6",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +171,7 @@ def _write_run_state(
     emitter: _ProgressEmitter,
     started_at: str,
     provisional_actions: dict[str, str] | None = None,
+    provisional_evidence_sha256: str | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
     state: dict[str, Any] = {
@@ -165,6 +185,7 @@ def _write_run_state(
         "progress_sequence": emitter.sequence,
         "elapsed_seconds": emitter.elapsed_seconds,
         "provisional_actions": provisional_actions or {},
+        "provisional_evidence_sha256": provisional_evidence_sha256,
         "error": error,
     }
     write_json(output / RUN_STATE_NAME, state)
@@ -244,6 +265,19 @@ def _evaluate_first_phase(
                 reason=str(event["reasons"][0]),
             )
     return events
+
+
+def _provisional_evidence_sha256(events: list[dict[str, Any]]) -> str:
+    """Bind substantive checkpoint evidence while excluding volatile runtime fields."""
+    stable_events = [
+        {
+            key: value
+            for key, value in event.items()
+            if key not in {"observed_at", "inference_latency_ms"}
+        }
+        for event in events
+    ]
+    return sha256_bytes(canonical_json({"events": stable_events}))
 
 
 def _recovery_check(event: dict[str, Any], window: int) -> dict[str, Any]:
@@ -484,6 +518,7 @@ def prepare_guided_demo(
         records = read_jsonl(data_dir / "observations.jsonl")
         events = _evaluate_first_phase(model_dir, baseline_path, records, emitter)
         provisional_actions = {str(event["scenario"]): str(event["action"]) for event in events}
+        provisional_digest = _provisional_evidence_sha256(events)
         emitter.emit(
             "operator_checkpoint",
             "awaiting_input",
@@ -502,6 +537,7 @@ def prepare_guided_demo(
             emitter=emitter,
             started_at=started_at,
             provisional_actions=provisional_actions,
+            provisional_evidence_sha256=provisional_digest,
         )
         return {
             "output": str(output),
@@ -532,13 +568,11 @@ def prepare_guided_demo(
 def _summary(
     output: Path,
     *,
-    seed: int,
-    mode: DemoMode,
-    regenerate_zeek: bool,
     dataset_manifest: dict[str, Any],
     model_manifest: dict[str, Any],
     events: list[dict[str, Any]],
     verification: dict[str, Any],
+    evidence_bindings: dict[str, Any],
 ) -> dict[str, Any]:
     artifact_paths = (
         "baseline.json",
@@ -551,18 +585,40 @@ def _summary(
     )
     return {
         "schema_version": SCHEMA_VERSION,
-        "version": __version__,
+        "version": evidence_bindings["version"],
         "completed_at": datetime.now(UTC).isoformat(),
+        "git_revision": evidence_bindings["git_revision"],
+        "python": evidence_bindings["python"],
+        "seed": evidence_bindings["seed"],
+        "trl_claim": evidence_bindings["trl_claim"],
+        "limitations": evidence_bindings["limitations"],
+        "demonstration": evidence_bindings["demonstration"],
+        "dataset_manifest": dataset_manifest,
+        "model_manifest": model_manifest,
+        "scenario_actions": {str(event["scenario"]): str(event["action"]) for event in events},
+        "ledger_valid": bool(verification["valid"]),
+        "artifacts": {name: sha256_file(output / name) for name in artifact_paths},
+    }
+
+
+def _build_evidence_bindings(
+    output: Path,
+    *,
+    seed: int,
+    mode: DemoMode,
+    regenerate_zeek: bool,
+    dataset_manifest: dict[str, Any],
+    events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Create the provenance and artifact index protected by the terminal seal."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "version": __version__,
         "git_revision": _git_revision(),
         "python": platform.python_version(),
         "seed": seed,
         "trl_claim": "Evidence consistent with TRL 3 laboratory proof of concept",
-        "limitations": [
-            "synthetic_data",
-            "no_external_partner_validation",
-            "no_representative_operational_environment",
-            "not_trl_6",
-        ],
+        "limitations": list(_LIMITATIONS),
         "demonstration": {
             "mode": mode,
             "telemetry_source": str(dataset_manifest["zeek_mode"]),
@@ -570,11 +626,7 @@ def _summary(
             "operator_acknowledged": True,
             "recovery_window_count": int(events[-1]["stable_window_count"]),
         },
-        "dataset_manifest": dataset_manifest,
-        "model_manifest": model_manifest,
-        "scenario_actions": {str(event["scenario"]): str(event["action"]) for event in events},
-        "ledger_valid": bool(verification["valid"]),
-        "artifacts": {name: sha256_file(output / name) for name in artifact_paths},
+        "artifacts": {name: sha256_file(output / name) for name in _BOUND_ARTIFACTS},
     }
 
 
@@ -612,6 +664,7 @@ def complete_guided_demo(
         emitter=emitter,
         started_at=started_at,
         provisional_actions={str(k): str(v) for k, v in state["provisional_actions"].items()},
+        provisional_evidence_sha256=str(state.get("provisional_evidence_sha256") or ""),
     )
     try:
         emitter.emit(
@@ -631,6 +684,18 @@ def complete_guided_demo(
         baseline_path = output / "baseline.json"
         records = read_jsonl(output / "data" / "observations.jsonl")
         events = _evaluate_first_phase(model_dir, baseline_path, records)
+        reconstructed_actions = {str(event["scenario"]): str(event["action"]) for event in events}
+        expected_actions = {str(k): str(v) for k, v in state["provisional_actions"].items()}
+        expected_digest = state.get("provisional_evidence_sha256")
+        if (
+            not isinstance(expected_digest, str)
+            or len(expected_digest) != 64
+            or reconstructed_actions != expected_actions
+            or _provisional_evidence_sha256(events) != expected_digest
+        ):
+            raise ValueError(
+                "Reconstructed first-phase evidence does not match the acknowledged checkpoint"
+            )
         emitter.emit(
             "evidence_reconstruction",
             "completed",
@@ -651,8 +716,21 @@ def complete_guided_demo(
 
         ledger_path = output / "assurance_events.jsonl"
         public_key_path = output / "public_key.pem"
+        evidence_bindings = _build_evidence_bindings(
+            output,
+            seed=seed,
+            mode=typed_mode,
+            regenerate_zeek=regenerate_zeek,
+            dataset_manifest=dataset_manifest,
+            events=events,
+        )
         emitter.emit("ledger_signing", "started", "Signing the six-event SHA-256 hash chain")
-        sign_events(events, ledger_path, public_key_path)
+        sign_events(
+            events,
+            ledger_path,
+            public_key_path,
+            evidence_bindings=evidence_bindings,
+        )
         emitter.emit(
             "ledger_signing",
             "completed",
@@ -684,13 +762,11 @@ def complete_guided_demo(
         emitter.emit("evidence_preparation", "started", "Preparing the verified evidence index")
         summary = _summary(
             output,
-            seed=seed,
-            mode=typed_mode,
-            regenerate_zeek=regenerate_zeek,
             dataset_manifest=dataset_manifest,
             model_manifest=model_manifest,
             events=events,
             verification=verification,
+            evidence_bindings=evidence_bindings,
         )
         write_json(output / "run_summary.json", summary)
         emitter.emit(
@@ -709,6 +785,7 @@ def complete_guided_demo(
             emitter=emitter,
             started_at=started_at,
             provisional_actions={str(event["scenario"]): str(event["action"]) for event in events},
+            provisional_evidence_sha256=str(state["provisional_evidence_sha256"]),
         )
         return summary
     except Exception as error:
@@ -725,6 +802,8 @@ def complete_guided_demo(
             seed=seed,
             emitter=emitter,
             started_at=started_at,
+            provisional_actions={str(k): str(v) for k, v in state["provisional_actions"].items()},
+            provisional_evidence_sha256=str(state.get("provisional_evidence_sha256") or ""),
             error=f"{error.__class__.__name__}: {error}",
         )
         raise

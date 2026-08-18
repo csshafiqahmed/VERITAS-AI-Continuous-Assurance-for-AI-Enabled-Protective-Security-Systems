@@ -392,7 +392,9 @@ def _render_guided(runs_root: Path, registry: ActiveRunRegistry) -> None:
             phase = state.get("phase")
             st.caption(f"Run {current_run.name}")
             if phase == "awaiting_acknowledgement":
-                registry.claim(current_run)
+                if not registry.claim(current_run):
+                    st.error("Another reviewer run is active in this application process.")
+                    return
                 _render_checkpoint(current_run, registry)
                 return
             if phase == "completed":
@@ -726,6 +728,17 @@ def _render_evidence(run_dir: Path) -> None:
 
     st.header("Integrity and provenance")
     model_manifest = snapshot["model_manifest"]
+    evidence_bindings = snapshot["verification"].get("evidence_bindings")
+    if isinstance(evidence_bindings, dict):
+        st.success(
+            "The terminal ledger seal binds the displayed run identity and the core "
+            "baseline, dataset, and model artifacts."
+        )
+    else:
+        st.caption(
+            "This version 1.0 evidence predates signed artifact bindings. Its ledger, "
+            "manifests, and recorded artifact hashes have still been checked before display."
+        )
     provenance = [
         {"field": "Git revision", "value": summary.get("git_revision", "Not recorded")},
         {"field": "Model SHA-256", "value": model_manifest.get("model_sha256", "Not recorded")},
@@ -739,8 +752,18 @@ def _render_evidence(run_dir: Path) -> None:
         },
     ]
     st.dataframe(provenance, width="stretch", hide_index=True)
+    if isinstance(evidence_bindings, dict) and evidence_bindings.get("artifacts"):
+        with st.expander("Signed artifact bindings"):
+            st.dataframe(
+                [
+                    {"artifact": name, "SHA-256": digest}
+                    for name, digest in evidence_bindings["artifacts"].items()
+                ],
+                width="stretch",
+                hide_index=True,
+            )
     if snapshot["artifacts"]:
-        with st.expander("Artifact hashes"):
+        with st.expander("Verified evidence package hashes"):
             st.dataframe(
                 [
                     {"artifact": name, "SHA-256": digest}

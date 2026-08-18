@@ -12,6 +12,8 @@ Ledger verification accepts a complete `1.0` or `1.1.0` chain. It rejects unknow
 | Run summary | `schemas/run_summary.schema.json` |
 | Verification report | `schemas/verification_report.schema.json` |
 
-The `1.1.0` assurance-event schema adds optional signed recovery evidence. The run-summary schema adds the demonstration mode, telemetry source, Zeek validation state, operator acknowledgement, and number of stable recovery windows.
+The `1.1.0` assurance-event schema adds optional signed recovery evidence. Its terminal seal can also carry signed evidence bindings. These bindings protect the baseline, dataset manifest, native model, model manifest, software identity, seed, TRL statement, limitations, and demonstration settings. The verification report returns the bindings only after the whole ledger has passed its hash-chain and signature checks.
+
+The run-summary schema adds the demonstration mode, telemetry source, Zeek validation state, operator acknowledgement, and number of stable recovery windows. Before the dashboard displays a `1.1.0` run, it compares these fields with the signed bindings and checks every recorded artifact hash. Version `1.0` evidence remains readable through its preserved manifest and artifact checks, although it predates terminal-seal artifact bindings.
 
 Progress updates and the local guided-run state are implementation details. They are excluded from the public evidence schemas and release bundles. Unknown top-level fields are permitted only where a schema explicitly allows them.

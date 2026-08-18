@@ -24,11 +24,11 @@ Start New Demonstration executes the real data-generation, model-training, basel
 
 The first five scenarios run before the operator checkpoint. Partial telemetry loss is deliberately unlabelled, which leaves accuracy, calibration, and false-negative evidence unavailable. The model-replacement scenario produces `withdraw` after the observed model hash fails the baseline integrity check.
 
-The reviewer must acknowledge the investigation before recovery is evaluated. Two deterministic 125-observation windows are drawn from stratified baseline conditions. Both must remain inside the warning envelope. The final recovery event and its two checks are then included in the signed ledger.
+The reviewer must acknowledge the investigation before recovery is evaluated. The application reconstructs the first five results and compares their substantive evidence digest with the checkpoint. A change to any decision field, metric, integrity result, or reason stops finalisation. Two deterministic 125-observation windows are then drawn from stratified baseline conditions. Both must remain inside the warning envelope. The final recovery event and its two checks are included in the signed ledger.
 
 ## Signed evidence mode
 
-Signed Evidence Review verifies event order, hashes, Ed25519 signatures, the terminal seal, and agreement with the run summary before it renders any result. The reviewer can inspect outcome history, PSI, missingness, label availability, CUSUM evidence, labelled measures, feature drift, latency, recovery checks, and artifact hashes.
+Signed Evidence Review verifies event order, hashes, Ed25519 signatures, the terminal seal, the dataset file inventory, the model and baseline relationship, and agreement with the run summary before it renders any result. Current evidence also binds the core artifact hashes and displayed provenance inside the signed terminal seal. The reviewer can inspect outcome history, PSI, missingness, label availability, CUSUM evidence, labelled measures, feature drift, latency, recovery checks, and artifact hashes.
 
 The Safe Tamper Test changes one metric in a temporary ledger copy. The copy must fail verification while the canonical ledger hash remains unchanged.
 

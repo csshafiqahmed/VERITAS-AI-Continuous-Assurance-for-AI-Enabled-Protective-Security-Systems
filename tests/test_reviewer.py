@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import veritas_ai.reviewer as reviewer
-from veritas_ai.io import write_json
+from veritas_ai.io import sha256_file, write_json
 from veritas_ai.ledger import sign_events, write_verification_report
 from veritas_ai.reviewer import (
     build_reviewer_archive,
@@ -25,21 +25,31 @@ def _completed_run(root: Path) -> Path:
     model_dir = run_dir / "model"
     data_dir.mkdir(parents=True)
     model_dir.mkdir()
-    (model_dir / "model.json").write_text("{}\n", encoding="utf-8")
-    write_json(
-        model_dir / "model_manifest.json",
-        {"schema_version": "1.1.0", "model_sha256": "a" * 64},
-    )
-    write_json(data_dir / "dataset_manifest.json", {"schema_version": "1.1.0"})
+    model_path = model_dir / "model.json"
+    model_path.write_text("{}\n", encoding="utf-8")
+    model_manifest = {
+        "schema_version": "1.1.0",
+        "model_sha256": sha256_file(model_path),
+        "classes": [],
+    }
+    write_json(model_dir / "model_manifest.json", model_manifest)
     (data_dir / "traffic.pcap").write_bytes(b"safe synthetic PCAP")
-    write_json(
-        run_dir / "baseline.json",
-        {
-            "schema_version": "1.1.0",
-            "model_sha256": "a" * 64,
-            "policy_sha256": "b" * 64,
+    (data_dir / "auth.jsonl").write_text("{}\n", encoding="utf-8")
+    dataset_manifest = {
+        "schema_version": "1.1.0",
+        "zeek_mode": "synthetic_zeek_compatible",
+        "files": {
+            "traffic.pcap": sha256_file(data_dir / "traffic.pcap"),
+            "auth.jsonl": sha256_file(data_dir / "auth.jsonl"),
         },
-    )
+    }
+    write_json(data_dir / "dataset_manifest.json", dataset_manifest)
+    baseline = {
+        "schema_version": "1.1.0",
+        "model_sha256": model_manifest["model_sha256"],
+        "policy_sha256": "b" * 64,
+    }
+    write_json(run_dir / "baseline.json", baseline)
     events = [
         {
             "scenario": "stable_operation",
@@ -57,8 +67,44 @@ def _completed_run(root: Path) -> Path:
     ]
     ledger = run_dir / "assurance_events.jsonl"
     public_key = run_dir / "public_key.pem"
-    sign_events(events, ledger, public_key)
+    demonstration = {
+        "mode": "guided_reviewer",
+        "telemetry_source": "synthetic_zeek_compatible",
+        "zeek_validated": False,
+        "operator_acknowledged": True,
+        "recovery_window_count": 2,
+    }
+    limitations = ["not_trl_6"]
+    bindings = {
+        "schema_version": "1.1.0",
+        "version": "0.2.0",
+        "git_revision": "unavailable",
+        "python": "3.12.3",
+        "seed": 42,
+        "trl_claim": "Evidence consistent with TRL 3 laboratory proof of concept",
+        "limitations": limitations,
+        "demonstration": demonstration,
+        "artifacts": {
+            name: sha256_file(run_dir / name)
+            for name in (
+                "baseline.json",
+                "data/dataset_manifest.json",
+                "model/model.json",
+                "model/model_manifest.json",
+            )
+        },
+    }
+    sign_events(events, ledger, public_key, evidence_bindings=bindings)
     report = write_verification_report(ledger, public_key, run_dir / "verification_report.json")
+    artifact_names = (
+        "baseline.json",
+        "assurance_events.jsonl",
+        "public_key.pem",
+        "verification_report.json",
+        "data/dataset_manifest.json",
+        "model/model.json",
+        "model/model_manifest.json",
+    )
     write_json(
         run_dir / "run_summary.json",
         {
@@ -66,20 +112,15 @@ def _completed_run(root: Path) -> Path:
             "version": "0.2.0",
             "seed": 42,
             "git_revision": "unavailable",
-            "trl_claim": "Evidence consistent with TRL 3 laboratory proof of concept",
-            "limitations": ["not_trl_6"],
-            "demonstration": {
-                "mode": "guided_reviewer",
-                "telemetry_source": "synthetic_zeek_compatible",
-                "zeek_validated": False,
-                "operator_acknowledged": True,
-                "recovery_window_count": 2,
-            },
-            "dataset_manifest": {"zeek_mode": "synthetic_zeek_compatible"},
-            "model_manifest": {"model_sha256": "a" * 64, "classes": []},
+            "python": "3.12.3",
+            "trl_claim": bindings["trl_claim"],
+            "limitations": limitations,
+            "demonstration": demonstration,
+            "dataset_manifest": dataset_manifest,
+            "model_manifest": model_manifest,
             "scenario_actions": {"stable_operation": "continue"},
             "ledger_valid": report["valid"],
-            "artifacts": {},
+            "artifacts": {name: sha256_file(run_dir / name) for name in artifact_names},
         },
     )
     return run_dir
@@ -227,3 +268,127 @@ def test_safe_tamper_test_preserves_canonical_evidence(tmp_path: Path) -> None:
     assert result["tampered_valid"] is False
     assert result["tampered_error"] == "Hash mismatch at line 1"
     assert result["changed_field"] == "maximum_psi"
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["baseline.json", "model/model.json", "data/auth.jsonl"],
+)
+def test_verified_run_rejects_modified_bound_or_manifest_artifact(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    run_dir = _completed_run(tmp_path / "runs")
+    path = run_dir / relative_path
+    path.write_bytes(path.read_bytes() + b"\n")
+
+    with pytest.raises(ValueError, match=r"hash|binding|manifest|Model artifact"):
+        load_verified_run(run_dir)
+
+
+def test_verified_run_rejects_modified_signed_summary_metadata(tmp_path: Path) -> None:
+    run_dir = _completed_run(tmp_path / "runs")
+    summary = reviewer.read_json(run_dir / "run_summary.json")
+    summary["seed"] = 7
+    write_json(run_dir / "run_summary.json", summary)
+
+    with pytest.raises(ValueError, match="not bound by the ledger, seed"):
+        load_verified_run(run_dir)
+
+
+def test_verified_run_rejects_symlinked_baseline(tmp_path: Path) -> None:
+    run_dir = _completed_run(tmp_path / "runs")
+    baseline = run_dir / "baseline.json"
+    copied = run_dir / "baseline-copy.json"
+    copied.write_bytes(baseline.read_bytes())
+    baseline.unlink()
+    baseline.symlink_to(copied.name)
+
+    with pytest.raises(ValueError, match=r"regular file at baseline\.json"):
+        load_verified_run(run_dir)
+
+
+def test_verified_run_rejects_mismatched_stored_verification(tmp_path: Path) -> None:
+    run_dir = _completed_run(tmp_path / "runs")
+    report_path = run_dir / "verification_report.json"
+    report = reviewer.read_json(report_path)
+    report["events_checked"] = 99
+    write_json(report_path, report)
+
+    with pytest.raises(ValueError, match="verification report"):
+        load_verified_run(run_dir)
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    [
+        ("schema", "schema versions do not match"),
+        ("dataset_summary", "dataset manifest does not match"),
+        ("model_summary", "model manifest does not match"),
+        ("baseline_model", "Baseline and model manifest"),
+        ("ledger_valid", "does not record a valid ledger"),
+    ],
+)
+def test_verified_run_rejects_cross_artifact_inconsistency(
+    tmp_path: Path,
+    case: str,
+    message: str,
+) -> None:
+    run_dir = _completed_run(tmp_path / "runs")
+    summary_path = run_dir / "run_summary.json"
+    summary = reviewer.read_json(summary_path)
+    if case == "schema":
+        summary["schema_version"] = "1.0"
+    elif case == "dataset_summary":
+        summary["dataset_manifest"] = {"schema_version": "1.1.0"}
+    elif case == "model_summary":
+        summary["model_manifest"] = {"schema_version": "1.1.0"}
+    elif case == "baseline_model":
+        baseline_path = run_dir / "baseline.json"
+        baseline = reviewer.read_json(baseline_path)
+        baseline["model_sha256"] = "f" * 64
+        write_json(baseline_path, baseline)
+    else:
+        summary["ledger_valid"] = False
+    write_json(summary_path, summary)
+
+    with pytest.raises(ValueError, match=message):
+        load_verified_run(run_dir)
+
+
+def test_verified_run_rejects_missing_summary_artifact_hash(tmp_path: Path) -> None:
+    run_dir = _completed_run(tmp_path / "runs")
+    summary_path = run_dir / "run_summary.json"
+    summary = reviewer.read_json(summary_path)
+    summary["artifacts"].pop("model/model.json")
+    write_json(summary_path, summary)
+
+    with pytest.raises(ValueError, match="missing required artifact hashes"):
+        load_verified_run(run_dir)
+
+
+@pytest.mark.parametrize(
+    ("files", "message"),
+    [
+        ({}, "does not contain file hashes"),
+        ({"../outside.json": "a" * 64}, "Invalid evidence path"),
+        ({"missing/file.json": "a" * 64}, "invalid directory"),
+    ],
+)
+def test_verified_run_rejects_unsafe_dataset_inventory(
+    tmp_path: Path,
+    files: dict[str, str],
+    message: str,
+) -> None:
+    run_dir = _completed_run(tmp_path / "runs")
+    manifest_path = run_dir / "data" / "dataset_manifest.json"
+    manifest = reviewer.read_json(manifest_path)
+    manifest["files"] = files
+    write_json(manifest_path, manifest)
+    summary_path = run_dir / "run_summary.json"
+    summary = reviewer.read_json(summary_path)
+    summary["dataset_manifest"] = manifest
+    write_json(summary_path, summary)
+
+    with pytest.raises(ValueError, match=message):
+        load_verified_run(run_dir)

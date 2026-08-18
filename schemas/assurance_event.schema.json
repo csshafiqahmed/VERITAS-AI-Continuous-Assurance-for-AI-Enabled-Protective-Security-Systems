@@ -67,7 +67,8 @@
             "required": ["event_count", "terminal_event_hash"],
             "properties": {
               "event_count": {"type": "integer", "minimum": 0},
-              "terminal_event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              "terminal_event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "evidence_bindings": {"type": "object"}
             },
             "additionalProperties": false
           }

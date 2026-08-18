@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from veritas_ai.constants import ZEEK_IMAGE
+from veritas_ai.constants import SCHEMA_VERSION, ZEEK_IMAGE
 from veritas_ai.io import read_json, read_jsonl, sha256_file, write_jsonl
 from veritas_ai.ledger import verify_ledger
 
@@ -45,6 +45,53 @@ _PRIVATE_KEY_MARKERS = (
     b"-----BEGIN OPENSSH PRIVATE KEY-----",
     b"-----BEGIN EC PRIVATE KEY-----",
     b"-----BEGIN RSA PRIVATE KEY-----",
+)
+_REQUIRED_EVIDENCE_PATHS = (
+    "run_summary.json",
+    "assurance_events.jsonl",
+    "public_key.pem",
+    "baseline.json",
+    "data/dataset_manifest.json",
+    "model/model.json",
+    "model/model_manifest.json",
+    "verification_report.json",
+)
+_CURRENT_SUMMARY_ARTIFACTS = frozenset(
+    {
+        "baseline.json",
+        "assurance_events.jsonl",
+        "public_key.pem",
+        "verification_report.json",
+        "data/dataset_manifest.json",
+        "model/model.json",
+        "model/model_manifest.json",
+    }
+)
+_LEGACY_SUMMARY_ARTIFACTS = frozenset(
+    {
+        "baseline.json",
+        "assurance_events.jsonl",
+        "public_key.pem",
+        "verification_report.json",
+    }
+)
+_BOUND_ARTIFACTS = frozenset(
+    {
+        "baseline.json",
+        "data/dataset_manifest.json",
+        "model/model.json",
+        "model/model_manifest.json",
+    }
+)
+_BOUND_SUMMARY_FIELDS = (
+    "schema_version",
+    "version",
+    "git_revision",
+    "python",
+    "seed",
+    "trl_claim",
+    "limitations",
+    "demonstration",
 )
 
 
@@ -220,27 +267,149 @@ def create_reviewer_run(runs_root: Path) -> Path:
     return output
 
 
+def _regular_file_beneath(root: Path, relative_name: str) -> Path:
+    """Resolve a regular non-symlink file without permitting path traversal."""
+    relative = PurePosixPath(relative_name)
+    if (
+        not relative.parts
+        or relative.is_absolute()
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or "\\" in relative_name
+    ):
+        raise ValueError(f"Invalid evidence path, {relative_name}")
+    current = root
+    for part in relative.parts[:-1]:
+        current /= part
+        if current.is_symlink() or not current.is_dir():
+            raise ValueError(f"Evidence path contains an invalid directory, {relative_name}")
+    candidate = root.joinpath(*relative.parts)
+    if candidate.is_symlink() or not candidate.is_file():
+        raise ValueError(f"Evidence requires a regular file at {relative_name}")
+    if not candidate.resolve(strict=True).is_relative_to(root.resolve(strict=True)):
+        raise ValueError(f"Evidence path escapes the run directory, {relative_name}")
+    return candidate
+
+
+def _validate_dataset_files(run_dir: Path, manifest: dict[str, Any]) -> None:
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("Dataset manifest does not contain file hashes")
+    data_root = run_dir / "data"
+    for name, expected_hash in files.items():
+        if not isinstance(name, str) or not isinstance(expected_hash, str):
+            raise ValueError("Dataset manifest contains an invalid file-hash entry")
+        path = _regular_file_beneath(data_root, name)
+        if sha256_file(path) != expected_hash:
+            raise ValueError(f"Dataset artifact hash does not match for {name}")
+
+
+def _validate_summary_artifacts(
+    run_dir: Path,
+    summary: dict[str, Any],
+    *,
+    current_schema: bool,
+) -> None:
+    artifacts = summary.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise ValueError("Run summary does not contain an artifact index")
+    required = _CURRENT_SUMMARY_ARTIFACTS if current_schema else _LEGACY_SUMMARY_ARTIFACTS
+    if not required.issubset(artifacts):
+        raise ValueError("Run summary is missing required artifact hashes")
+    for name, expected_hash in artifacts.items():
+        if not isinstance(name, str) or not isinstance(expected_hash, str):
+            raise ValueError("Run summary contains an invalid artifact-hash entry")
+        path = _regular_file_beneath(run_dir, name)
+        if sha256_file(path) != expected_hash:
+            raise ValueError(f"Run summary artifact hash does not match for {name}")
+
+
+def _validate_stored_verification(
+    stored: dict[str, Any],
+    fresh: dict[str, Any],
+    *,
+    current_schema: bool,
+) -> None:
+    if current_schema:
+        if stored != fresh:
+            raise ValueError("Stored verification report does not match fresh verification")
+        return
+    for field in ("valid", "events_checked", "error", "ledger_sha256"):
+        if stored.get(field) != fresh.get(field):
+            raise ValueError("Legacy verification report does not match fresh verification")
+
+
+def _validate_signed_bindings(
+    run_dir: Path,
+    summary: dict[str, Any],
+    verification: dict[str, Any],
+) -> None:
+    bindings = verification.get("evidence_bindings")
+    if not isinstance(bindings, dict):
+        raise ValueError("Current evidence is missing signed artifact bindings")
+    for field in _BOUND_SUMMARY_FIELDS:
+        if bindings.get(field) != summary.get(field):
+            raise ValueError(f"Run summary field is not bound by the ledger, {field}")
+    artifacts = bindings.get("artifacts")
+    if not isinstance(artifacts, dict) or set(artifacts) != _BOUND_ARTIFACTS:
+        raise ValueError("Signed artifact bindings are incomplete")
+    for name, expected_hash in artifacts.items():
+        if not isinstance(expected_hash, str):
+            raise ValueError(f"Signed artifact binding is invalid for {name}")
+        path = _regular_file_beneath(run_dir, str(name))
+        if sha256_file(path) != expected_hash:
+            raise ValueError(f"Signed artifact binding does not match for {name}")
+
+
 def load_verified_run(run_dir: Path) -> dict[str, Any]:
     """Load display evidence only after cryptographic and summary reconciliation."""
+    if run_dir.is_symlink():
+        raise ValueError("Evidence path cannot be a symlink")
     resolved = run_dir.resolve(strict=True)
     if not resolved.is_dir():
         raise ValueError("Evidence path is not a directory")
-    required = (
-        resolved / "run_summary.json",
-        resolved / "assurance_events.jsonl",
-        resolved / "public_key.pem",
+    for directory in (resolved / "data", resolved / "model"):
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError(f"Completed evidence requires a regular directory at {directory.name}")
+    required = {name: _regular_file_beneath(resolved, name) for name in _REQUIRED_EVIDENCE_PATHS}
+    summary = read_json(required["run_summary.json"])
+    verification = verify_ledger(
+        required["assurance_events.jsonl"],
+        required["public_key.pem"],
     )
-    if any(path.is_symlink() or not path.is_file() for path in required):
-        raise ValueError(
-            "Completed evidence requires regular summary, ledger, and public-key files"
-        )
-    summary = read_json(required[0])
-    verification = verify_ledger(required[1], required[2])
     if not verification["valid"]:
         raise ValueError(f"Dashboard refused an invalid evidence ledger, {verification['error']}")
 
+    ledger_schema = verification.get("ledger_schema_version")
+    summary_schema = summary.get("schema_version", "1.0")
+    if summary_schema != ledger_schema:
+        raise ValueError("Run summary and signed ledger schema versions do not match")
+    current_schema = ledger_schema == SCHEMA_VERSION
+
+    dataset_manifest = read_json(required["data/dataset_manifest.json"])
+    model_manifest = read_json(required["model/model_manifest.json"])
+    baseline = read_json(required["baseline.json"])
+    if summary.get("dataset_manifest") != dataset_manifest:
+        raise ValueError("Run summary dataset manifest does not match its artifact")
+    if summary.get("model_manifest") != model_manifest:
+        raise ValueError("Run summary model manifest does not match its artifact")
+    _validate_dataset_files(resolved, dataset_manifest)
+    if sha256_file(required["model/model.json"]) != model_manifest.get("model_sha256"):
+        raise ValueError("Model artifact does not match its manifest")
+    if baseline.get("model_sha256") != model_manifest.get("model_sha256"):
+        raise ValueError("Baseline and model manifest do not identify the same model")
+
+    stored_verification = read_json(required["verification_report.json"])
+    _validate_stored_verification(
+        stored_verification,
+        verification,
+        current_schema=current_schema,
+    )
+    _validate_summary_artifacts(resolved, summary, current_schema=current_schema)
+    if current_schema:
+        _validate_signed_bindings(resolved, summary, verification)
+
     events: list[dict[str, Any]] = []
-    for index, record in enumerate(read_jsonl(required[1]), start=1):
+    for index, record in enumerate(read_jsonl(required["assurance_events.jsonl"]), start=1):
         if record.get("record_type") == "seal":
             continue
         event = record.get("event")

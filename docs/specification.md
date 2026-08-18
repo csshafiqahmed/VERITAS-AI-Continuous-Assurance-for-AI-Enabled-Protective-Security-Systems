@@ -52,4 +52,8 @@ Labelled metrics are unavailable when monitoring data have no ground truth. The 
 
 The acknowledgement records a laboratory workflow action. It does not identify or legally attest an operator.
 
-The terminal ledger seal signs the final event hash and expected event count. Verification fails if a signed event suffix or the seal itself is removed. The recorded Git revision is resolved only from the source project checkout. Installed wheels outside that checkout report the revision as unavailable rather than adopting the revision of an unrelated working directory.
+The terminal ledger seal signs the final event hash and expected event count. In schema version `1.1.0`, it also signs hashes for the baseline, dataset manifest, native model, and model manifest. Run identity, seed, environment, TRL wording, limitations, and demonstration settings are protected by the same seal. Verification fails if a signed event suffix or the seal itself is removed.
+
+The checkpoint stores a digest of the first five substantive scenario results. Runtime timestamps and measured inference latency are excluded because they change when the evidence is reconstructed. All decision fields, metrics, integrity results, and reasons remain inside the digest. Recovery is refused if the reconstructed evidence or action sequence differs from the acknowledged checkpoint.
+
+The recorded Git revision is resolved only from the source project checkout. Installed wheels outside that checkout report the revision as unavailable rather than adopting the revision of an unrelated working directory.

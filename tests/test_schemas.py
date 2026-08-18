@@ -38,7 +38,16 @@ def test_current_public_evidence_schemas_accept_recovery_fields(tmp_path: Path) 
     }
     ledger = tmp_path / "events.jsonl"
     public_key = tmp_path / "public.pem"
-    sign_events([event], ledger, public_key)
+    sign_events(
+        [event],
+        ledger,
+        public_key,
+        evidence_bindings={
+            "schema_version": "1.1.0",
+            "version": "0.2.0",
+            "artifacts": {"baseline.json": "a" * 64},
+        },
+    )
     records = read_jsonl(ledger)
     for record in records:
         validate(record, _schema(repository, "assurance_event.schema.json"))
