@@ -12,7 +12,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from veritas_ai.constants import SCHEMA_VERSION
+from veritas_ai.constants import SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS
 from veritas_ai.io import canonical_json, sha256_bytes, write_json, write_jsonl
 
 LEDGER_SEAL_TYPE = "seal"
@@ -25,9 +25,10 @@ def _signed_record(
     previous_hash: str,
     record_type: str,
     event: dict[str, Any],
+    schema_version: str,
 ) -> dict[str, Any]:
     unsigned = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": schema_version,
         "index": index,
         "previous_hash": previous_hash,
         "record_type": record_type,
@@ -39,8 +40,14 @@ def _signed_record(
 
 
 def sign_events(
-    events: list[dict[str, Any]], ledger_path: Path, public_key_path: Path
+    events: list[dict[str, Any]],
+    ledger_path: Path,
+    public_key_path: Path,
+    *,
+    schema_version: str = SCHEMA_VERSION,
 ) -> list[dict[str, Any]]:
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise ValueError(f"Unsupported signing schema version {schema_version}")
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
     previous_hash = "0" * 64
@@ -52,6 +59,7 @@ def sign_events(
             previous_hash,
             LEDGER_EVENT_TYPE,
             event,
+            schema_version,
         )
         records.append(record)
         previous_hash = str(record["event_hash"])
@@ -64,6 +72,7 @@ def sign_events(
             "event_count": len(events),
             "terminal_event_hash": previous_hash,
         },
+        schema_version,
     )
     records.append(seal)
     write_jsonl(ledger_path, records)
@@ -84,6 +93,7 @@ def verify_ledger(ledger_path: Path, public_key_path: Path) -> dict[str, Any]:
     previous_hash = "0" * 64
     checked = 0
     error: str | None = None
+    ledger_schema_version: str | None = None
     try:
         lines = [
             line for line in ledger_path.read_text(encoding="utf-8").splitlines() if line.strip()
@@ -91,8 +101,13 @@ def verify_ledger(ledger_path: Path, public_key_path: Path) -> dict[str, Any]:
         seal_seen = False
         for line_number, line in enumerate(lines, start=1):
             record = json.loads(line)
-            if record["schema_version"] != SCHEMA_VERSION:
+            record_schema_version = record["schema_version"]
+            if record_schema_version not in SUPPORTED_SCHEMA_VERSIONS:
                 raise ValueError(f"Unsupported schema version at line {line_number}")
+            if ledger_schema_version is None:
+                ledger_schema_version = str(record_schema_version)
+            elif record_schema_version != ledger_schema_version:
+                raise ValueError(f"Mixed schema versions at line {line_number}")
             unsigned = {
                 "schema_version": record["schema_version"],
                 "index": record["index"],
@@ -141,6 +156,7 @@ def verify_ledger(ledger_path: Path, public_key_path: Path) -> dict[str, Any]:
         error = str(exc) or exc.__class__.__name__
     return {
         "schema_version": SCHEMA_VERSION,
+        "ledger_schema_version": ledger_schema_version,
         "valid": error is None,
         "events_checked": checked,
         "error": error,

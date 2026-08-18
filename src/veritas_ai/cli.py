@@ -99,18 +99,40 @@ def verify_command(
 
 @app.command("dashboard")
 def dashboard_command(
-    run: Annotated[Path, typer.Option(exists=True, help="Completed demonstration directory")],
+    run: Annotated[
+        Path | None,
+        typer.Option(exists=True, help="Optional completed demonstration directory"),
+    ] = None,
+    runs_root: Annotated[
+        Path,
+        typer.Option(help="Directory for guided reviewer runs"),
+    ] = Path("runs/reviewer"),
+    address: Annotated[
+        str,
+        typer.Option(help="Streamlit bind address"),
+    ] = "127.0.0.1",
 ) -> None:
-    """Open the read-only Streamlit evidence dashboard."""
+    """Open the guided demonstration and signed evidence application."""
+    if address not in {"127.0.0.1", "0.0.0.0"}:
+        raise typer.BadParameter("Address must be 127.0.0.1 or 0.0.0.0")
     command = [
         sys.executable,
         "-m",
         "streamlit",
         "run",
         str(Path(__file__).with_name("dashboard.py")),
+        "--server.address",
+        address,
+        "--server.port",
+        "8501",
+        "--server.headless",
+        "true",
         "--",
-        str(run.resolve()),
+        "--runs-root",
+        str(runs_root.resolve()),
     ]
+    if run is not None:
+        command.extend(["--run", str(run.resolve())])
     raise typer.Exit(code=subprocess.run(command, check=False).returncode)
 
 

@@ -20,7 +20,7 @@ Manual workflow runs also create and verify GitHub artifact attestations. Pull r
 
 ## Publication gate
 
-Publication is tag-only. The repository variable `APACHE_2_RELEASE_AUTHORISED` must equal `true`, and the tag must exactly match the package version as `v0.1.0`.
+Publication is tag-only. The repository variable `APACHE_2_RELEASE_AUTHORISED` must equal `true`, and the tag must exactly match the package version as `v0.2.0`.
 
 After both conditions are met, the workflow publishes the AMD64 and ARM64 image to GitHub Container Registry, attaches provenance and SBOM evidence, verifies every checksum, confirms anonymous access to both container architectures, and creates a GitHub pre-release.
 
@@ -39,7 +39,7 @@ sha256sum --check SHA256SUMS
 The wheel provenance can be checked with GitHub CLI.
 
 ```bash
-gh attestation verify veritas_ai_assurance-0.1.0-py3-none-any.whl \
+gh attestation verify veritas_ai_assurance-0.2.0-py3-none-any.whl \
   --repo csshafiqahmed/VERITAS-AI-Continuous-Assurance-for-AI-Enabled-Protective-Security-Systems
 ```
 
@@ -49,4 +49,13 @@ The evidence ledger remains independently verifiable with the released public ke
 veritas-ai verify \
   --ledger assurance_events.jsonl \
   --public-key public_key.pem
+```
+
+The container dashboard is opened with an explicit host binding.
+
+```bash
+docker run --rm \
+  -p 127.0.0.1:8501:8501 \
+  ghcr.io/csshafiqahmed/veritas-ai-continuous-assurance-for-ai-enabled-protective-security-systems:0.2.0 \
+  dashboard --address 0.0.0.0 --runs-root /tmp/reviewer
 ```

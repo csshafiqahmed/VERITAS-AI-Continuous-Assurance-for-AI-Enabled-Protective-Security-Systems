@@ -16,13 +16,21 @@ Python 3.12 and [`uv`](https://docs.astral.sh/uv/) are required.
 
 ```bash
 uv sync --all-groups
+uv run veritas-ai dashboard
+```
+
+The dashboard opens in Guided Demonstration mode and writes unique runs beneath `runs/reviewer`. It performs the actual laboratory computation, pauses for an operator acknowledgement, signs the completed evidence, and then opens the verified review view. The seed remains fixed at 42.
+
+The command line remains available for an automatic run without the acknowledgement pause.
+
+```bash
 uv run veritas-ai demo --output runs/trl3
 uv run veritas-ai verify \
   --ledger runs/trl3/assurance_events.jsonl \
   --public-key runs/trl3/public_key.pem
 ```
 
-Run the local dashboard after the demonstration.
+Open a completed run directly in Signed Evidence Review.
 
 ```bash
 uv run veritas-ai dashboard --run runs/trl3
@@ -35,6 +43,20 @@ uv run veritas-ai demo --regenerate-zeek --output runs/trl3
 ```
 
 The validated JSON connection log is saved at `runs/trl3/data/zeek-output/conn.log`. Its hash, record count, image reference, reported Zeek version, and required-field contract are recorded in the dataset manifest. `observations.jsonl` is then rebuilt from this log, `auth.jsonl`, and `labels.jsonl`.
+
+## Container dashboard
+
+The published container requires an explicit local port mapping. Reviewer runs are stored in the mounted `runs` directory.
+
+```bash
+docker run --rm \
+  -p 127.0.0.1:8501:8501 \
+  -v "$PWD/runs:/app/runs" \
+  ghcr.io/csshafiqahmed/veritas-ai-continuous-assurance-for-ai-enabled-protective-security-systems:0.2.0 \
+  dashboard --address 0.0.0.0 --runs-root /app/runs/reviewer
+```
+
+Open `http://127.0.0.1:8501`. Binding to `127.0.0.1` keeps the host port local unless the operator deliberately chooses another address.
 
 ## Separate workflows
 
@@ -81,7 +103,7 @@ These outcomes do not retrain a model, block traffic, or replace a security oper
 - Unlabelled monitoring reports drift, integrity, latency, and missingness only.
 - External adoption, representative cyber-range trials, and operational validation are future work.
 
-See the [technical specification](docs/specification.md), [threat model](docs/threat-model.md), and [TRL 3 evidence matrix](docs/trl3-evidence.md).
+See the [reviewer demonstration](docs/reviewer-demonstration.md), [technical specification](docs/specification.md), [threat model](docs/threat-model.md), and [TRL 3 evidence matrix](docs/trl3-evidence.md).
 
 ## Licence and citation
 

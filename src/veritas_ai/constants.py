@@ -2,7 +2,9 @@
 
 from typing import Final
 
-SCHEMA_VERSION: Final = "1.0"
+SCHEMA_VERSION: Final = "1.1.0"
+LEGACY_SCHEMA_VERSIONS: Final = frozenset({"1.0"})
+SUPPORTED_SCHEMA_VERSIONS: Final = frozenset({SCHEMA_VERSION, *LEGACY_SCHEMA_VERSIONS})
 DEFAULT_SEED: Final = 42
 ZEEK_VERSION: Final = "8.0.9"
 ZEEK_IMAGE: Final = (

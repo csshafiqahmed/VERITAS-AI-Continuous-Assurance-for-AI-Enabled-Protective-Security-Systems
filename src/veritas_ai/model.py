@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 import time
+from collections.abc import Callable
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,12 @@ def encoded_labels(records: list[dict[str, Any]]) -> np.ndarray:
     return np.asarray([lookup[str(record["label"])] for record in records], dtype=int)
 
 
-def train_model(dataset_path: Path, output: Path, seed: int = DEFAULT_SEED) -> dict[str, Any]:
+def train_model(
+    dataset_path: Path,
+    output: Path,
+    seed: int = DEFAULT_SEED,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
     records = read_jsonl(dataset_path)
     training = [record for record in records if record.get("split") == "train"]
     calibration = [record for record in records if record.get("split") == "calibration"]
@@ -58,6 +64,8 @@ def train_model(dataset_path: Path, output: Path, seed: int = DEFAULT_SEED) -> d
     model.fit(x_train, y_train)
     training_seconds = time.perf_counter() - start
     probabilities = model.predict_proba(x_calibration)
+    if progress is not None:
+        progress("xgboost")
 
     comparison = make_pipeline(
         StandardScaler(),
@@ -65,6 +73,8 @@ def train_model(dataset_path: Path, output: Path, seed: int = DEFAULT_SEED) -> d
     )
     comparison.fit(x_train, y_train)
     comparison_probabilities = comparison.predict_proba(x_calibration)
+    if progress is not None:
+        progress("logistic_regression")
 
     output.mkdir(parents=True, exist_ok=True)
     model_path = output / "model.json"

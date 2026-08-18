@@ -37,3 +37,32 @@ def test_ledger_rejects_signed_prefix_truncation(tmp_path: Path) -> None:
 def test_private_key_is_not_persisted(tmp_path: Path) -> None:
     sign_events([{"action": "continue"}], tmp_path / "events.jsonl", tmp_path / "public.pem")
     assert sorted(path.name for path in tmp_path.iterdir()) == ["events.jsonl", "public.pem"]
+
+
+def test_legacy_schema_ledger_remains_verifiable(tmp_path: Path) -> None:
+    ledger = tmp_path / "legacy.jsonl"
+    public_key = tmp_path / "legacy-public.pem"
+    sign_events(
+        [{"action": "continue"}],
+        ledger,
+        public_key,
+        schema_version="1.0",
+    )
+
+    report = verify_ledger(ledger, public_key)
+    assert report["valid"] is True
+    assert report["ledger_schema_version"] == "1.0"
+    assert report["schema_version"] == "1.1.0"
+
+
+def test_mixed_schema_ledger_is_rejected(tmp_path: Path) -> None:
+    ledger = tmp_path / "mixed.jsonl"
+    public_key = tmp_path / "mixed-public.pem"
+    sign_events([{"action": "continue"}], ledger, public_key)
+    records = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    records[-1]["schema_version"] = "1.0"
+    ledger.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+
+    report = verify_ledger(ledger, public_key)
+    assert report["valid"] is False
+    assert report["error"] == "Mixed schema versions at line 2"

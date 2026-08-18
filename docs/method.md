@@ -4,7 +4,7 @@ The method is deliberately staged. It first checks that the assurance mechanism 
 
 ## Data generation
 
-A fixed seed defines 5,000 labelled windows. The first 2,500 support training, 500 support calibration, 500 establish the reference envelope, and six groups of 250 exercise the monitoring scenarios. Each window maps to one or more safe synthetic TCP flows and one authentication event. A feature builder checks the complete flow-to-window mapping and then aggregates Zeek connection fields and authentication evidence. Ground-truth labels are joined only for the controlled offline evaluation.
+A fixed seed defines 5,000 windows. The first 2,500 support training, 500 support calibration, 500 establish the reference envelope, and six groups of 250 exercise the monitoring scenarios. Each window maps to one or more safe synthetic TCP flows and one authentication event. A feature builder checks the complete flow-to-window mapping and then aggregates Zeek connection fields and authentication evidence. Ground-truth labels are joined only when they are available for controlled offline evaluation. The partial telemetry scenario deliberately withholds them.
 
 The accompanying PCAP contains no exploit payloads. A separate Docker-backed gate processes all 41,248 default-seed flows with the digest-pinned official Zeek 8.0.9 LTS image. It validates the resulting JSON `conn.log` and rebuilds `observations.jsonl` from that output before model training, baselining, and monitoring.
 
@@ -19,3 +19,5 @@ The baseline records per-class error rates, macro F1, expected calibration error
 ## Decisions
 
 The policy returns `continue`, `investigate`, `recalibrate`, or `withdraw`. These outputs are advisory. They do not change the classifier or enforce a network response.
+
+The guided workflow stops after the model replacement scenario. Recovery begins only after the reviewer acknowledges the investigation. The 250 recovery observations form two ordered 125-observation windows drawn from stratified reference conditions. Both windows must retain model and policy integrity and remain below warning thresholds. If either check fails, the final event adopts the most severe observed outcome.

@@ -13,11 +13,31 @@ def _event(timestamp: float, text: str) -> str:
     return json.dumps([timestamp, "o", text], ensure_ascii=True, separators=(",", ":"))
 
 
-def build_cast(summary_path: Path, verification_path: Path, output: Path) -> None:
+def _signed_events(ledger_path: Path | None) -> dict[str, dict[str, Any]]:
+    if ledger_path is None:
+        return {}
+    events: dict[str, dict[str, Any]] = {}
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        record = json.loads(line)
+        if record.get("record_type") != "event" or not isinstance(record.get("event"), dict):
+            continue
+        event = record["event"]
+        events[str(event["scenario"])] = event
+    return events
+
+
+def build_cast(
+    summary_path: Path,
+    verification_path: Path,
+    output: Path,
+    ledger_path: Path | None = None,
+) -> None:
     summary: dict[str, Any] = json.loads(summary_path.read_text(encoding="utf-8"))
     verification: dict[str, Any] = json.loads(verification_path.read_text(encoding="utf-8"))
     manifest = summary["dataset_manifest"]
     actions = summary["scenario_actions"]
+    demonstration = summary.get("demonstration", {})
+    signed_events = _signed_events(ledger_path)
     lines = [
         json.dumps(
             {
@@ -36,11 +56,29 @@ def build_cast(summary_path: Path, verification_path: Path, output: Path) -> Non
             f"Evidence summary  {manifest['observation_count']} windows  "
             f"{manifest['connection_count']} Zeek connections\r\n",
         ),
+        _event(
+            1.0,
+            f"Workflow mode  {demonstration.get('mode', 'not recorded')}  "
+            f"telemetry  {demonstration.get('telemetry_source', 'not recorded')}  "
+            f"Zeek validated  {demonstration.get('zeek_validated', False)}\r\n",
+        ),
     ]
-    timestamp = 1.2
+    timestamp = 1.4
     for scenario, action in actions.items():
-        lines.append(_event(timestamp, f"{scenario:<32} {action}\r\n"))
+        event = signed_events.get(scenario, {})
+        label_note = "  labels unavailable" if event.get("labels_available") is False else ""
+        lines.append(_event(timestamp, f"{scenario:<32} {action}{label_note}\r\n"))
         timestamp += 0.35
+    lines.append(
+        _event(
+            timestamp,
+            "Operator acknowledgement  "
+            f"{demonstration.get('operator_acknowledged', False)}  "
+            "stable recovery windows  "
+            f"{demonstration.get('recovery_window_count', 0)}\r\n",
+        )
+    )
+    timestamp += 0.4
     lines.extend(
         [
             _event(
@@ -67,9 +105,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", type=Path, required=True)
     parser.add_argument("--verification", type=Path, required=True)
+    parser.add_argument("--ledger", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    build_cast(args.summary, args.verification, args.output)
+    build_cast(args.summary, args.verification, args.output, args.ledger)
 
 
 if __name__ == "__main__":

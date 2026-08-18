@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/veritas-ai/1.0/assurance_event.schema.json",
+  "$id": "https://example.org/veritas-ai/1.1.0/assurance_event.schema.json",
   "title": "VERITAS-AI signed assurance ledger record",
   "type": "object",
   "required": ["schema_version", "index", "previous_hash", "record_type", "event", "event_hash", "signature"],
   "properties": {
-    "schema_version": {"const": "1.0"},
+    "schema_version": {"const": "1.1.0"},
     "index": {"type": "integer", "minimum": 0},
     "previous_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "record_type": {"enum": ["event", "seal"]},
@@ -14,6 +14,50 @@
     "signature": {"type": "string"}
   },
   "allOf": [
+    {
+      "if": {"properties": {"record_type": {"const": "event"}}},
+      "then": {
+        "properties": {
+          "event": {
+            "type": "object",
+            "properties": {
+              "operator_acknowledged": {"type": "boolean"},
+              "stable_window_count": {"type": "integer", "minimum": 0},
+              "recovery_checks": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": ["window", "sample_count", "labels_available", "action", "reasons", "maximum_psi", "telemetry_missingness", "integrity", "within_warning_envelope"],
+                  "properties": {
+                    "window": {"type": "integer", "minimum": 1, "maximum": 2},
+                    "sample_count": {"type": "integer", "minimum": 1},
+                    "labels_available": {"type": "boolean"},
+                    "action": {"enum": ["continue", "investigate", "recalibrate", "withdraw"]},
+                    "reasons": {"type": "array", "items": {"type": "string"}},
+                    "maximum_psi": {"type": "number", "minimum": 0},
+                    "telemetry_missingness": {"type": "number", "minimum": 0, "maximum": 1},
+                    "integrity": {
+                      "type": "object",
+                      "required": ["model_matches", "policy_matches"],
+                      "properties": {
+                        "model_matches": {"type": "boolean"},
+                        "policy_matches": {"type": "boolean"}
+                      },
+                      "additionalProperties": false
+                    },
+                    "within_warning_envelope": {"type": "boolean"}
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
     {
       "if": {"properties": {"record_type": {"const": "seal"}}},
       "then": {

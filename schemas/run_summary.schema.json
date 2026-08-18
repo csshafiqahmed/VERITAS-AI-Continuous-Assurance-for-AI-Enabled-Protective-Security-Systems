@@ -1,14 +1,26 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/veritas-ai/1.0/run_summary.schema.json",
+  "$id": "https://example.org/veritas-ai/1.1.0/run_summary.schema.json",
   "title": "VERITAS-AI run summary",
   "type": "object",
-  "required": ["schema_version", "version", "trl_claim", "limitations", "scenario_actions", "ledger_valid", "artifacts"],
+  "required": ["schema_version", "version", "trl_claim", "limitations", "demonstration", "scenario_actions", "ledger_valid", "artifacts"],
   "properties": {
-    "schema_version": {"const": "1.0"},
+    "schema_version": {"const": "1.1.0"},
     "version": {"type": "string"},
     "trl_claim": {"type": "string"},
     "limitations": {"type": "array", "items": {"type": "string"}},
+    "demonstration": {
+      "type": "object",
+      "required": ["mode", "telemetry_source", "zeek_validated", "operator_acknowledged", "recovery_window_count"],
+      "properties": {
+        "mode": {"enum": ["automatic_cli", "guided_reviewer"]},
+        "telemetry_source": {"type": "string"},
+        "zeek_validated": {"type": "boolean"},
+        "operator_acknowledged": {"type": "boolean"},
+        "recovery_window_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
     "scenario_actions": {"type": "object"},
     "ledger_valid": {"type": "boolean"},
     "artifacts": {"type": "object"}
