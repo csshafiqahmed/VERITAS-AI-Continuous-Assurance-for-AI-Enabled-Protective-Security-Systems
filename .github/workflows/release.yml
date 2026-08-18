@@ -245,13 +245,25 @@ jobs:
       - name: Verify release checksums
         working-directory: release-assets
         run: sha256sum --check SHA256SUMS
-      - name: Make the linked GHCR package public
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - name: Verify anonymous multi-platform container access
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh api --method PATCH
-          /user/packages/container/veritas-ai-continuous-assurance-for-ai-enabled-protective-security-systems
-          -f visibility=public
+          DOCKER_CONFIG: ${{ runner.temp }}/veritas-anonymous-docker
+          RELEASE_IMAGE: ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+        run: |
+          mkdir -p "${DOCKER_CONFIG}"
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if docker buildx imagetools inspect "${RELEASE_IMAGE}" \
+              > "${RUNNER_TEMP}/veritas-container-index.txt" \
+              && grep -q 'linux/amd64' "${RUNNER_TEMP}/veritas-container-index.txt" \
+              && grep -q 'linux/arm64' "${RUNNER_TEMP}/veritas-container-index.txt"; then
+              cat "${RUNNER_TEMP}/veritas-container-index.txt"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "The release container is not anonymously accessible" >&2
+          exit 1
       - name: Create the public pre-release
         env:
           GH_TOKEN: ${{ github.token }}

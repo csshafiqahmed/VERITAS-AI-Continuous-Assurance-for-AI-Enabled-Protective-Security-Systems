@@ -81,3 +81,14 @@ def test_checksums_reject_unexpected_hidden_file(tmp_path: Path) -> None:
     (tmp_path / ".secret").write_bytes(b"not public")
     with pytest.raises(ValueError, match="Unexpected hidden release file"):
         write_checksums(tmp_path)
+
+
+def test_release_workflow_checks_anonymous_container_access() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    workflow = (repository_root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "/user/packages" not in workflow
+    assert "Verify anonymous multi-platform container access" in workflow
+    assert "DOCKER_CONFIG" in workflow
+    assert "docker buildx imagetools inspect" in workflow
+    assert "&& grep -q 'linux/amd64'" in workflow
+    assert "&& grep -q 'linux/arm64'" in workflow
