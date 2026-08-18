@@ -22,7 +22,9 @@ Manual workflow runs also create and verify GitHub artifact attestations. Pull r
 
 Publication is tag-only. The repository variable `APACHE_2_RELEASE_AUTHORISED` must equal `true`, and the tag must exactly match the package version as `v0.1.0`.
 
-After both conditions are met, the workflow publishes the AMD64 and ARM64 image to GitHub Container Registry, attaches provenance and SBOM evidence, makes the linked package public, verifies every checksum, and creates a GitHub pre-release.
+After both conditions are met, the workflow publishes the AMD64 and ARM64 image to GitHub Container Registry, attaches provenance and SBOM evidence, verifies every checksum, confirms anonymous access to both container architectures, and creates a GitHub pre-release.
+
+GitHub package visibility is configured through the package settings page. The workflow does not attempt to change that account-level setting through the Packages API. For a package's first release, set its visibility to Public after the image is created and rerun the failed publication job. Later releases verify the existing public setting without using stored registry credentials.
 
 No tag should be created until licence authority has been confirmed and the release-candidate issue is complete.
 
